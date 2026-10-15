@@ -193,4 +193,4 @@ FeatureForge was developed inside TabularAML and benchmarked there. This reposit
 extracted from `b-ionut-r/TabularAML-refactored` at commit `89fc353` (PR #2), which holds every
 adopted improvement. The extraction was checked by running the original and this package on the same
 inputs. Both produced identical feature files on synthetic tables covering every block, and on West
-Nile and Rossmann (see [docs/results.md](docs/results.md#parity-with-the-original)). Home Credit is being checked.
+Nile, Rossmann and Home Credit (see [docs/results.md](docs/results.md#parity-with-the-original)).

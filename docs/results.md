@@ -128,5 +128,6 @@ inputs, one after the other in one container, with pandas 3.0.5 and the library 
 | Synthetic store × item daily sales | forecasting block + held-out check | 16,272 × 48 / 1,008 × 47 | byte-identical |
 | West Nile Virus (Kaggle files) | search + gate (21 kept, gate +7.21%) | 10,506 × 53 / 116,293 × 52 | byte-identical |
 | Rossmann (Kaggle files, 1.02M rows) | forecasting block (63 columns, check z +140) | 1,017,209 × 81 / 41,088 × 80 | byte-identical |
+| Home Credit (Kaggle files + 5 child tables, 31M child rows) | aggregates, latest-state history, price paths, child-row models (kept, +0.24%), search + gate (+0.57%) | 307,511 × 1,370 / 48,744 × 1,369 | byte-identical (2,424 s vs 2,406 s) |
 
 The ported test suite passes: 77 tests, 1 skipped. The four TabularAML solver tests were left out with the solver.
