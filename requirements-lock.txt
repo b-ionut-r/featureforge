@@ -1,0 +1,11 @@
+# The exact numerical stack every benchmark in docs/results.md ran on (Python 3.13). FeatureForge is
+# deterministic on fixed versions; other LightGBM or scikit-learn versions can split differently and
+# pick other features. Install with: pip install -r requirements-lock.txt
+numpy==2.4.6
+pandas==3.0.5
+scipy==1.17.1
+scikit-learn==1.9.1
+lightgbm==4.7.0
+pyarrow==24.0.0
+joblib==1.6.0
+threadpoolctl==3.7.0
