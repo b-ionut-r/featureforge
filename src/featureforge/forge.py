@@ -2326,6 +2326,14 @@ class FeatureForge:
             self._set_wu(F, on=False)
             G = F.assign(**vals)
             M = (*self._lgb_matrix(self._model_frame(G)), list(G.columns))
+            # Small tables repeat the CV up to three times; a block already worse on the first repeat
+            # is not fitted on the others (most blocks lose by 1-9%, and their fits were 89% of Ames's run).
+            if len(folds) > 1:
+                _, l1, _ = self._cv(None, yW, folds[:1], mat=M)
+                ref = self._block_ref(yW, folds[:1], F, best)
+                if l1 >= ref:
+                    self._log(f"block {op} ({len(specs)} columns): first CV repeat {ref:.6f} -> {l1:.6f}; dropped")
+                    continue
             _, loss, _ = self._cv(None, yW, folds, mat=M)
             self._log(f"block {op} ({len(specs)} columns): CV loss "
                       f"{best:.6f} -> {loss:.6f} ({100 * (best - loss) / best:+.2f}%)")
@@ -2338,6 +2346,15 @@ class FeatureForge:
                 F, cols, best = W, list(W.columns), loss
                 r_next += 1
         return best
+
+    def _block_ref(self, yW, folds1, F, best):
+        """The current frame's CV loss on the first repeat only (cached per frame width)."""
+        key = (len(F.columns), round(best, 12))
+        if getattr(self, "_block_ref_key", None) != key:
+            _, self._block_ref_loss, _ = self._cv(None, yW, folds1,
+                                                  mat=(*self._lgb_matrix(self._model_frame(F)), list(F.columns)))
+            self._block_ref_key = key
+        return self._block_ref_loss
 
     def _sparse_te(self, X) -> bool:
         """A selected target statistic keyed on a thin key (under 20 rows a level). Its
