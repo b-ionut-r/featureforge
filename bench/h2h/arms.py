@@ -195,6 +195,19 @@ def arm_ff_snapshot(label):
     return arm
 
 
+def arm_llmff(label):
+    """The LLM's kept domain features added to the table first, then FeatureForge (snapshot ``label``) on top:
+    does the search still add anything once domain features are in?"""
+    def arm(tr, te, meta, budget, threads):
+        A, B, info = arm_llm(tr, te, meta, budget, threads)
+        A.columns = B.columns = [f"llm{i}" for i in range(A.shape[1])]
+        tr2 = pd.concat([tr.reset_index(drop=True), A], axis=1)
+        te2 = pd.concat([te.reset_index(drop=True), B], axis=1)
+        A2, B2, info2 = arm_ff_snapshot(label)(tr2, te2, meta, budget, threads)
+        return A2, B2, dict(info2, n_llm=int(A.shape[1]), kept=info.get("kept"))
+    return arm
+
+
 ARMS = {"llm": arm_llm, "featureforge": arm_featureforge, "openfe": arm_openfe, "autofeat": arm_autofeat,
         "featuretools": arm_featuretools}
 
@@ -212,10 +225,11 @@ def main():
     out.mkdir(exist_ok=True)
     os.environ["H2H_ARM_DIR"] = str(out)
     t0 = time.time()
-    fn = arm_ff_snapshot(a.arm.split(":", 1)[1]) if a.arm.startswith("ff:") else ARMS[a.arm]
+    fn = (arm_ff_snapshot(a.arm.split(":", 1)[1]) if a.arm.startswith("ff:") else
+          arm_llmff(a.arm.split(":", 1)[1]) if a.arm.startswith("llmff:") else ARMS[a.arm])
     A, B, info = fn(tr, te, meta, a.budget, a.threads)
     info["seconds"] = time.time() - t0
-    if a.arm == "featureforge" or a.arm.startswith("ff:"):  # FeatureForge returns the full table (it may recode raw columns)
+    if a.arm == "featureforge" or a.arm.startswith(("ff:", "llmff:")):  # FeatureForge returns the full table (it may recode raw columns)
         A.to_parquet(out / "train.parquet"), B.to_parquet(out / "test.parquet")
         info["full"] = True
     else:

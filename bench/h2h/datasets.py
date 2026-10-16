@@ -112,6 +112,11 @@ SPECS = [
     Spec("diabetes130", O(4541), task="multiclass", max_rows=100_000, group="papers"),
     Spec("vehicle", O(54), task="multiclass", group="papers"),
     Spec("california", O(44090), task="regression", log=True, max_rows=None, group="papers"),
+    # --- kaggle: whole contest train files (no row cap), a random 80/20 split as these contests' tests were
+    Spec("santander_full", "kaggle:santander-customer-transaction-prediction/train.csv", "target", drop=["ID_code"],
+         max_rows=None, group="kaggle"),
+    Spec("porto_full", "kaggle:porto-seguro-safe-driver-prediction/train.csv", "target", drop=["id"],
+         max_rows=None, group="kaggle"),
 ]
 SPEC = {s.name: s for s in SPECS}
 
@@ -146,7 +151,16 @@ def load(name: str):
     """(X, y, task, description). The row cap's sample is fixed (seed 0) so every split sees one table."""
     s = SPEC[name]
     desc = ""
-    if s.url.startswith("openml:"):
+    if s.url.startswith("kaggle:"):  # a contest's train file, downloaded with the Kaggle CLI
+        slug, fname = s.url[7:].split("/")
+        f = data_dir() / "kaggle" / f"{slug}_{fname}.zip"
+        if not f.exists():
+            import subprocess
+            f.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["kaggle", "competitions", "download", "-c", slug, "-f", fname, "-p", str(f.parent)], check=True)
+            (f.parent / f"{fname}.zip").rename(f)
+        df, target = pd.read_csv(f), s.target
+    elif s.url.startswith("openml:"):
         df, target, meta = _openml(int(s.url.split(":")[1]))
         target = s.target or target
         desc = (meta.get("description") or "")[:3000]
