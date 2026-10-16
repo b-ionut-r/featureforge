@@ -1346,12 +1346,14 @@ class FeatureForge:
                 "verbose": False, "n_rounds": 0}
         d = np.zeros(n)
         t0 = time.time()
+        taken = set()
         for i, (tr, va) in enumerate(folds):
             sub = FeatureForge(**base)
             sub.cv_gate, sub.block_numeric = False, self.block_numeric
             Xtr, Xva = Xr.iloc[tr].reset_index(drop=True), Xr.iloc[va].reset_index(drop=True)
             U = Xva if X_unlabeled is None else pd.concat([Xva, self._named(X_unlabeled)], ignore_index=True)
             sub._fit(Xtr, y_arr[tr], U)
+            taken |= getattr(sub, "_blocks_taken", set())
             if sub.time_col_ is not None or sub.group_col_ is not None:
                 self._log("cross-validated gate: time or group structure found -> usual gate")
                 return None
@@ -1385,6 +1387,7 @@ class FeatureForge:
                 self._gate_veto = False
         final = FeatureForge(**{**base, "verbose": self.verbose})
         final.block_numeric = self.block_numeric
+        final._block_only = taken  # a block no fold kept is not fitted again on every row
         final._fit(X, y, X_unlabeled)
         params = self._params()
         self.__dict__.update(final.__dict__)
@@ -2308,7 +2311,11 @@ class FeatureForge:
         cols = list(W.columns)
         F = W
         best = cur_loss
+        only = getattr(self, "_block_only", None)
+        self._blocks_taken = set()
         for op, specs in blocks:
+            if only is not None and op not in only:
+                continue
             width = len(cols) + len(specs)
             if self._time_left() < self._cv_s * width / max(self._cv_w, 1):
                 self._log(f"arithmetic blocks: budget left too small for the {op} block; stopping")
@@ -2327,6 +2334,7 @@ class FeatureForge:
                     sp.round_ = r_next
                     W[sp.name] = vals[sp.name]
                 selected.extend(specs)
+                self._blocks_taken.add(op)
                 F, cols, best = W, list(W.columns), loss
                 r_next += 1
         return best
