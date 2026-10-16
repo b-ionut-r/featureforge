@@ -190,7 +190,7 @@ class FeatureForge:
         self.n_rounds = n_rounds
         self.block_numeric = 20
         self.cv_gate = True
-        self.cv_gate_rows = 10_000
+        self.cv_gate_rows = 3000
         self.max_new_features = max_new_features
         self.top_numeric = top_numeric
         self.top_keys = top_keys
@@ -1341,21 +1341,17 @@ class FeatureForge:
             folds = list(StratifiedKFold(K, shuffle=True, random_state=self.random_state + 7).split(np.zeros(n), y_arr))
         # The search's rounds are left out here: on a few hundred rows their picks overfit the search's own CV
         # (German credit, Pima diabetes: held out worse on every one of five splits, z -3 to -5); the blocks,
-        # a handful of fixed-width CV fits, are what carries over (Balance Scale, Tic-Tac-Toe, vehicles). Past 3,000
-        # rows the rounds stay; the gate is cross-validated there because a fifth of the rows (600-2,000) needs
-        # z >= 1.65 and turned down gains the other tools kept (Phoneme z=+1.60).
+        # a handful of fixed-width CV fits, are what carries over (Balance Scale, Tic-Tac-Toe, vehicles).
         base = {**self._params(), "gate_frac": 0.0, "time_budget": self.time_budget / (K + 1),
-                "verbose": False, "n_rounds": 0 if n <= 3000 else self.n_rounds}
+                "verbose": False, "n_rounds": 0}
         d = np.zeros(n)
         t0 = time.time()
-        taken = set()
         for i, (tr, va) in enumerate(folds):
             sub = FeatureForge(**base)
             sub.cv_gate, sub.block_numeric = False, self.block_numeric
             Xtr, Xva = Xr.iloc[tr].reset_index(drop=True), Xr.iloc[va].reset_index(drop=True)
             U = Xva if X_unlabeled is None else pd.concat([Xva, self._named(X_unlabeled)], ignore_index=True)
             sub._fit(Xtr, y_arr[tr], U)
-            taken |= getattr(sub, "_blocks_taken", set())
             if sub.time_col_ is not None or sub.group_col_ is not None:
                 self._log("cross-validated gate: time or group structure found -> usual gate")
                 return None
@@ -1389,7 +1385,6 @@ class FeatureForge:
                 self._gate_veto = False
         final = FeatureForge(**{**base, "verbose": self.verbose})
         final.block_numeric = self.block_numeric
-        final._block_only = taken  # a block no fold kept is not fitted again on every row
         final._fit(X, y, X_unlabeled)
         params = self._params()
         self.__dict__.update(final.__dict__)
@@ -2313,11 +2308,7 @@ class FeatureForge:
         cols = list(W.columns)
         F = W
         best = cur_loss
-        only = getattr(self, "_block_only", None)
-        self._blocks_taken = set()
         for op, specs in blocks:
-            if only is not None and op not in only:
-                continue
             width = len(cols) + len(specs)
             if self._time_left() < self._cv_s * width / max(self._cv_w, 1):
                 self._log(f"arithmetic blocks: budget left too small for the {op} block; stopping")
@@ -2328,14 +2319,6 @@ class FeatureForge:
             self._set_wu(F, on=False)
             G = F.assign(**vals)
             M = (*self._lgb_matrix(self._model_frame(G)), list(G.columns))
-            # Small tables repeat the CV up to three times; a block over 1% worse on the first repeat
-            # is not fitted on the others (most blocks lose by 1-9%, and their fits were 89% of Ames's run).
-            if len(folds) > 1:
-                _, l1, _ = self._cv(None, yW, folds[:1], mat=M)
-                ref = self._block_ref(yW, folds[:1], F, best)
-                if l1 >= ref * 1.01:  # clearly worse: a near-tie on one repeat is decided by all three
-                    self._log(f"block {op} ({len(specs)} columns): first CV repeat {ref:.6f} -> {l1:.6f}; dropped")
-                    continue
             _, loss, _ = self._cv(None, yW, folds, mat=M)
             self._log(f"block {op} ({len(specs)} columns): CV loss "
                       f"{best:.6f} -> {loss:.6f} ({100 * (best - loss) / best:+.2f}%)")
@@ -2344,19 +2327,9 @@ class FeatureForge:
                     sp.round_ = r_next
                     W[sp.name] = vals[sp.name]
                 selected.extend(specs)
-                self._blocks_taken.add(op)
                 F, cols, best = W, list(W.columns), loss
                 r_next += 1
         return best
-
-    def _block_ref(self, yW, folds1, F, best):
-        """The current frame's CV loss on the first repeat only (cached per frame width)."""
-        key = (len(F.columns), round(best, 12))
-        if getattr(self, "_block_ref_key", None) != key:
-            _, self._block_ref_loss, _ = self._cv(None, yW, folds1,
-                                                  mat=(*self._lgb_matrix(self._model_frame(F)), list(F.columns)))
-            self._block_ref_key = key
-        return self._block_ref_loss
 
     def _sparse_te(self, X) -> bool:
         """A selected target statistic keyed on a thin key (under 20 rows a level). Its
