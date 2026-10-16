@@ -37,6 +37,7 @@ class Spec:
     sep: str = ","
     max_rows: Optional[int] = 20_000
     group: str = "suite"
+    time: List[str] = field(default_factory=list)  # sort keys of a time-ordered table (run.py --time-split)
 
 
 def O(did):
@@ -140,6 +141,14 @@ SPECS = [
     Spec("porto_full", "kaggle:porto-seguro-safe-driver-prediction/train.csv", "target", drop=["id"],
          max_rows=None, group="kaggle"),
 ]
+# Tables whose rows carry a time order: with --time-split the last 20% in that order is held out.
+TIME_KEYS = {"bike_sharing": ["year", "month", "hour"], "kc_house": ["date_year", "date_month", "date_day"],
+             "kick": ["PurchDate"], "sf_crime": ["Year", "Month"], "wind": ["year", "month", "day"],
+             "nyc_taxi_tip": ["lpep_pickup_datetime_day", "lpep_pickup_datetime_hour", "lpep_pickup_datetime_minute"],
+             "house_prices": ["YrSold", "MoSold"], "ames": ["Yr.Sold", "Mo.Sold"]}
+for _s in SPECS:
+    _s.time = TIME_KEYS.get(_s.name, [])
+
 SPEC = {s.name: s for s in SPECS}
 
 
