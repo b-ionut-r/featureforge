@@ -190,7 +190,7 @@ class FeatureForge:
         self.n_rounds = n_rounds
         self.block_numeric = 20
         self.cv_gate = True
-        self.cv_gate_rows = 3000
+        self.cv_gate_rows = 10_000
         self.max_new_features = max_new_features
         self.top_numeric = top_numeric
         self.top_keys = top_keys
@@ -1341,9 +1341,11 @@ class FeatureForge:
             folds = list(StratifiedKFold(K, shuffle=True, random_state=self.random_state + 7).split(np.zeros(n), y_arr))
         # The search's rounds are left out here: on a few hundred rows their picks overfit the search's own CV
         # (German credit, Pima diabetes: held out worse on every one of five splits, z -3 to -5); the blocks,
-        # a handful of fixed-width CV fits, are what carries over (Balance Scale, Tic-Tac-Toe, vehicles).
+        # a handful of fixed-width CV fits, are what carries over (Balance Scale, Tic-Tac-Toe, vehicles). Past 3,000
+        # rows the rounds stay; the gate is cross-validated there because a fifth of the rows (600-2,000) needs
+        # z >= 1.65 and turned down gains the other tools kept (Phoneme z=+1.60).
         base = {**self._params(), "gate_frac": 0.0, "time_budget": self.time_budget / (K + 1),
-                "verbose": False, "n_rounds": 0}
+                "verbose": False, "n_rounds": 0 if n <= 3000 else self.n_rounds}
         d = np.zeros(n)
         t0 = time.time()
         taken = set()
@@ -2326,12 +2328,12 @@ class FeatureForge:
             self._set_wu(F, on=False)
             G = F.assign(**vals)
             M = (*self._lgb_matrix(self._model_frame(G)), list(G.columns))
-            # Small tables repeat the CV up to three times; a block already worse on the first repeat
+            # Small tables repeat the CV up to three times; a block over 1% worse on the first repeat
             # is not fitted on the others (most blocks lose by 1-9%, and their fits were 89% of Ames's run).
             if len(folds) > 1:
                 _, l1, _ = self._cv(None, yW, folds[:1], mat=M)
                 ref = self._block_ref(yW, folds[:1], F, best)
-                if l1 >= ref:
+                if l1 >= ref * 1.01:  # clearly worse: a near-tie on one repeat is decided by all three
                     self._log(f"block {op} ({len(specs)} columns): first CV repeat {ref:.6f} -> {l1:.6f}; dropped")
                     continue
             _, loss, _ = self._cv(None, yW, folds, mat=M)
