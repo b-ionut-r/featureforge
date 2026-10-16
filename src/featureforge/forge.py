@@ -1311,13 +1311,23 @@ class FeatureForge:
                 done = self._fit_cv_gated(X, y, X_unlabeled)
                 if done is not None:
                     return done
-            return self._fit(X, y, X_unlabeled)
+            self._fit(X, y, X_unlabeled)
+            # Up to 10,000 rows the 20% gate holds 600-2,000 rows and needs z >= 1.65 below 1,000; when it turns
+            # the search down, the blocks alone get the cross-validated gate, where every row is a gate row
+            # (Phoneme: gate z=+1.60 for the blocks the other tools gained 10-12% with).
+            if (self.cv_gate and self.gate_frac and self.cv_gate_rows < len(X) <= 10_000 and not self.gate_passed_
+                    and self.time_col_ is None and self.group_col_ is None):
+                keep = dict(self.__dict__)
+                if self._fit_cv_gated(X, y, X_unlabeled, second=True) is None:
+                    self.__dict__.clear()
+                    self.__dict__.update(keep)
+            return self
 
     def _params(self):
         import inspect
         return {k: getattr(self, k) for k in inspect.signature(type(self).__init__).parameters if k != "self"}
 
-    def _fit_cv_gated(self, X, y, X_unlabeled):
+    def _fit_cv_gated(self, X, y, X_unlabeled, second=False):
         """Small tables: the gate as 5-fold cross-validation of the whole search.
 
         A 20% gate on a few hundred rows cannot tell a real gain from noise (breast cancer, 559 rows:
@@ -1374,6 +1384,8 @@ class FeatureForge:
         ok = d.mean() > 0 and z >= z_needed
         self._log(f"cross-validated gate over {n} rows: mean gain {d.mean():+.6f} (z={z:+.2f}, need {z_needed:.2f}) "
                   f"-> {'PASS' if ok else 'usual gate'} ({time.time() - t0:.0f}s)")
+        if not ok and second:
+            return None
         if not ok:
             # The whole procedure was judged on every row and did not beat the raw columns: the usual
             # 20% gate, with a fifth of the rows, is not asked again (breast cancer: its gate passed
