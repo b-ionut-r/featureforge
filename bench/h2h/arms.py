@@ -40,8 +40,10 @@ def arm_featureforge(tr, te, meta, budget, threads):
     sys.path.insert(0, os.environ.get("H2H_FF_SRC", "/home/user/ff_main/src"))
     from featureforge import build_features
     out = Path(os.environ["H2H_ARM_DIR"]) / "ff_out"
+    prop = os.environ.get("H2H_PROPOSALS")
+    kw = {"proposals": prop} if prop else {}
     ptr, pte = build_features(tr, te, Y, task=meta["task"], budget=budget, out_dir=str(out),
-                              forge_kw={"n_jobs": threads})
+                              forge_kw={"n_jobs": threads}, **kw)
     A = pd.read_parquet(ptr).drop(columns=[Y])
     B = pd.read_parquet(pte)[A.columns]
     return A, B, dict(n_new=int(A.shape[1] - tr.shape[1] + 1))
@@ -208,6 +210,17 @@ def arm_llmff(label):
     return arm
 
 
+def arm_ffp(label):
+    """FeatureForge (snapshot ``label``) with the LLM's proposals for this table (llm/<name>.py) passed as
+    ``proposals``: each kept only if it passes FeatureForge's check on top of the search's output."""
+    def arm(tr, te, meta, budget, threads):
+        f = HERE / "llm" / f"{meta['name']}.py"
+        if f.exists():
+            os.environ["H2H_PROPOSALS"] = str(f)
+        return arm_ff_snapshot(label)(tr, te, meta, budget, threads)
+    return arm
+
+
 ARMS = {"llm": arm_llm, "featureforge": arm_featureforge, "openfe": arm_openfe, "autofeat": arm_autofeat,
         "featuretools": arm_featuretools}
 
@@ -226,10 +239,11 @@ def main():
     os.environ["H2H_ARM_DIR"] = str(out)
     t0 = time.time()
     fn = (arm_ff_snapshot(a.arm.split(":", 1)[1]) if a.arm.startswith("ff:") else
-          arm_llmff(a.arm.split(":", 1)[1]) if a.arm.startswith("llmff:") else ARMS[a.arm])
+          arm_llmff(a.arm.split(":", 1)[1]) if a.arm.startswith("llmff:") else
+          arm_ffp(a.arm.split(":", 1)[1]) if a.arm.startswith("ffp:") else ARMS[a.arm])
     A, B, info = fn(tr, te, meta, a.budget, a.threads)
     info["seconds"] = time.time() - t0
-    if a.arm == "featureforge" or a.arm.startswith(("ff:", "llmff:")):  # FeatureForge returns the full table (it may recode raw columns)
+    if a.arm == "featureforge" or a.arm.startswith(("ff:", "llmff:", "ffp:")):  # FeatureForge returns the full table (it may recode raw columns)
         A.to_parquet(out / "train.parquet"), B.to_parquet(out / "test.parquet")
         info["full"] = True
     else:

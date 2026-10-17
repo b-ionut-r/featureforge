@@ -48,6 +48,8 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--lists", default="auto", choices=["auto", "off"],
                     help="list columns (item counts and common-item indicators) and per-unit amounts (a skewed amount "
                          "over small counts and their total), featureforge.blocks.lists; on from structure")
+    ap.add_argument("--proposals", default=None,
+                    help="Python file of domain features (PROPOSALS = [(label, fn)]), each kept only if it passes a CV check")
     return ap
 
 
@@ -57,7 +59,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                        child_models=a.child_models, task=a.task, log_target=a.log_target, budget=a.budget,
                        top_related=a.top_related, out_dir=a.out_dir, related_cache=a.related_cache,
                        forge_kw=json.loads(a.forge_kw), forecast=a.forecast, forecast_kw=json.loads(a.forecast_kw),
-                       history=a.history, panel=a.panel, lists=a.lists))
+                       history=a.history, panel=a.panel, lists=a.lists, proposals=a.proposals))
 
 
 if __name__ == "__main__":

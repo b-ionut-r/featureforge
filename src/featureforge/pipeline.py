@@ -303,6 +303,7 @@ class PipelineConfig:
     history: str = "auto"
     panel: str = "auto"
     lists: str = "auto"
+    proposals: Optional[str] = None
 
 
 def _load(src) -> pd.DataFrame:
@@ -337,7 +338,7 @@ def build_features(train, test, target: str, *, id: Optional[str] = None, tables
                    budget: float = 900, top_related: int = 200, out_dir: str = "features",
                    related_cache: Optional[str] = None, forge_kw: Optional[dict] = None, forecast: str = "auto",
                    forecast_kw: Optional[dict] = None, history: str = "auto", panel: str = "auto",
-                   lists: str = "auto") -> Tuple[Path, Path]:
+                   lists: str = "auto", proposals: Optional[str] = None) -> Tuple[Path, Path]:
     """Build features for a contest and write them to ``out_dir``.
 
     ``train`` and ``test`` are CSV/parquet paths or DataFrames; ``train`` holds ``target``. ``test`` is the
@@ -347,6 +348,9 @@ def build_features(train, test, target: str, *, id: Optional[str] = None, tables
     ``budget`` is FeatureForge's search budget in seconds of a 4-core reference machine; ``forge_kw`` and
     ``forecast_kw`` pass extra arguments to ``FeatureForge`` and ``ForecastFeatures``. ``forecast``,
     ``history``, ``panel`` and ``lists`` are ``"auto"`` (on from the data's structure) or ``"off"``.
+    ``proposals`` is a Python file of domain features written outside the search (``PROPOSALS = [(label, fn)]``,
+    e.g. by an LLM from the schema); each is kept only if it passes a cross-validated check on top of the
+    search's output (see ``featureforge.proposals``).
 
     Returns the paths of ``train_features.parquet`` (with the target) and ``test_features.parquet``.
     """
@@ -354,7 +358,32 @@ def build_features(train, test, target: str, *, id: Optional[str] = None, tables
                               time=time_col, child_models=child_models, task=task, log_target=log_target,
                               budget=budget, top_related=top_related, out_dir=str(out_dir),
                               related_cache=related_cache, forge_kw=dict(forge_kw or {}), forecast=forecast,
-                              forecast_kw=dict(forecast_kw or {}), history=history, panel=panel, lists=lists))
+                              forecast_kw=dict(forecast_kw or {}), history=history, panel=panel, lists=lists,
+                              proposals=proposals))
+
+
+def _add_proposals(cfg, out_tr, y, frames, test_path):
+    """Proposals that pass the check on top of the training output, added to both outputs."""
+    from featureforge import proposals as P
+    from featureforge.utils.task import infer_task
+    task = cfg.task or infer_task(y)
+    yy = np.asarray(y, dtype=float)
+    if task == "regression" and cfg.log_target:
+        yy = np.log1p(np.clip(yy, 0, None))
+    kept = P.gate(out_tr, yy, task, frames)
+    if not kept:
+        return out_tr
+    n = len(out_tr)
+    cols = dict(frames)
+    te = pd.read_parquet(test_path)
+    for label, names in kept:
+        v = cols[label]
+        for c in names:
+            out_tr[c] = v[c].iloc[:n].to_numpy()
+            te[c] = v[c].iloc[n:].to_numpy()
+    te.to_parquet(test_path)
+    print(f"proposals kept: {', '.join(l for l, _ in kept)}", flush=True)
+    return out_tr
 
 
 def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
@@ -367,6 +396,12 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
         # Class names (Santander's product codes) become 0..K-1 for the search; written back as given.
         codes, labels = pd.factorize(as_text(y), sort=True)
         y, cfg.task = pd.Series(codes, name=cfg.target), "multiclass"
+    prop_frames = None
+    if cfg.proposals:
+        from featureforge import proposals as P
+        raw = [F.drop(columns=[cfg.id]) if cfg.id and cfg.id in F.columns else F for F in (tr, te)]
+        prop_frames = P.compute(P.load(cfg.proposals), *raw)
+        print(f"proposals: {len(prop_frames)} usable from {cfg.proposals}", flush=True)
     ids_tr = tr[cfg.id].to_numpy() if cfg.id else np.arange(len(tr))
     ids_te = te[cfg.id].to_numpy() if cfg.id else np.arange(len(tr), len(tr) + len(te))
     rel_tr = rel_te = None
@@ -779,6 +814,8 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
     related(out_tr, "train.parquet")
     if spill is not None:
         shutil.rmtree(spill, ignore_errors=True)
+    if prop_frames:
+        out_tr = _add_proposals(cfg, out_tr, y, prop_frames, out / "test_features.parquet")
     out_tr[cfg.target] = labels[y.to_numpy()] if labels is not None else y.to_numpy()
     if cfg.id:
         out_tr.insert(0, cfg.id, ids_tr)
