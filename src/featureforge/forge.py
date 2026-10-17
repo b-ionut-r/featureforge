@@ -1307,7 +1307,9 @@ class FeatureForge:
         contest trick. Target statistics only ever use labeled rows.
         """
         with _one_blas_thread():
-            if self.cv_gate and self.gate_frac and 200 <= len(X) <= self.cv_gate_rows:
+            # Below 200 rows the 20% gate is not held out at all (too few rows), so the search's picks went in
+            # unjudged (Sonar, 166 rows: held-out log loss +32%); the cross-validated gate judges them there too.
+            if self.cv_gate and self.gate_frac and 60 <= len(X) <= self.cv_gate_rows:
                 done = self._fit_cv_gated(X, y, X_unlabeled)
                 if done is not None:
                     return done

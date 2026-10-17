@@ -26,3 +26,11 @@ def test_small_table_noise_target_keeps_raw_columns():
     f = FeatureForge(task="binary", time_budget=120, n_jobs=1, verbose=False).fit(X, y)
     assert not f.new_columns_
     assert list(f.transform(X).columns) == list(X.columns)
+
+
+def test_tiny_table_noise_target_keeps_raw_columns():
+    # 150 rows: no 20% gate is held out below 200 rows, so the cross-validated gate must judge the search.
+    X, rng = _measures(150, 2)
+    y = rng.integers(0, 2, len(X))
+    f = FeatureForge(task="binary", time_budget=120, n_jobs=1, verbose=False).fit(X, y)
+    assert not f.new_columns_

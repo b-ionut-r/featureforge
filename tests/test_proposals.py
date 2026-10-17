@@ -23,3 +23,12 @@ def test_helpful_proposal_kept_noise_and_broken_dropped():
     kept = P.gate(tr.reset_index(drop=True), y[:1200], "binary", frames, threads=1)
     assert [l for l, _ in kept] == ["ratio"]
     assert kept[0][1] == ["prop__ratio__ratio"]
+
+
+def test_confirmation_drops_a_lucky_pick():
+    # Ten pure-noise proposals: any that clears z >= 1 on the first folds by luck must fail on new folds.
+    X, y, rng = _data(800, 3)
+    props = [(f"noise{i}", (lambda i: lambda d: pd.Series(np.random.default_rng(100 + i).normal(size=len(d))))(i))
+             for i in range(10)]
+    frames = P.compute(props, X.iloc[:600], X.iloc[600:])
+    assert P.gate(X.iloc[:600].reset_index(drop=True), y[:600], "binary", frames, threads=1) == []

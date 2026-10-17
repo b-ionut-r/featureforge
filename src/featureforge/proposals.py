@@ -91,4 +91,19 @@ def gate(out_tr: pd.DataFrame, y, task: str, frames, seed: int = 0, threads: int
         if ok:
             base, cur = cand, rows
             kept.append((label, list(v.columns)))
+    if kept:
+        # The greedy pass picks the best of several tries on one set of folds: confirm the kept set as a whole on
+        # new folds against FeatureForge's output alone, or keep none of it.
+        f2 = list(split.__class__(5, shuffle=True, random_state=seed + 23).split(
+            np.zeros(len(idx)), None if task == "regression" else yy))
+        b0 = out_tr.iloc[idx].reset_index(drop=True)
+        r0 = _oof_rows(task, b0, yy, f2, seed, threads)
+        r1 = _oof_rows(task, base, yy, f2, seed, threads)
+        d = _winsor(r0 - r1, None if task == "regression" else yy)
+        z = float(d.mean() / (d.std(ddof=1) / np.sqrt(len(d)) + 1e-300)) if d.std() > 0 else 0.0
+        ok = (r0 - r1).mean() > 0 and z >= z_needed
+        print(f"proposals confirmed on new folds: CV loss {r0.mean():.6f} -> {r1.mean():.6f} (z={z:+.2f}) -> "
+              f"{'kept' if ok else 'all dropped'}", flush=True)
+        if not ok:
+            kept = []
     return kept
