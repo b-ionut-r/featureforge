@@ -23,7 +23,7 @@ import pandas as pd
 
 from featureforge.screens import _winsor
 
-MAX_ROWS = 100_000  # rows the check fits on: a uniform sample past this
+MAX_ROWS = 20_000  # rows the check fits on: a uniform sample past this
 
 
 def load(path) -> list:
@@ -76,6 +76,8 @@ def gate(out_tr: pd.DataFrame, y, task: str, frames, seed: int = 0, threads: int
              else StratifiedKFold(5, shuffle=True, random_state=seed + 11))
     folds = list(split.split(np.zeros(len(idx)), None if task == "regression" else yy))
     base = out_tr.iloc[idx].reset_index(drop=True)
+    if len(idx) * (base.shape[1] + 20) <= 5_000_000:
+        threads = 1  # small fits: extra threads only contend (10x slower on a busy machine)
     cur = _oof_rows(task, base, yy, folds, seed, threads)
     kept = []
     for label, v in frames:

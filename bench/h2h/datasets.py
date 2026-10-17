@@ -156,6 +156,28 @@ SPECS = [
     Spec("bank32nh", O(558), task="regression", group="fresh2"),
     Spec("mv", O(344), task="regression", group="fresh2"),
     Spec("house_8L", O(218), task="regression", group="fresh2"),
+    # --- fresh3: fixed on Oct 17 after seeing round-2 results on the 63 tables and part of fresh2, before any
+    # result on these; for proving changes designed after that (the proposal check's confirmation step)
+    Spec("kc2", O(1063), group="fresh3"),
+    Spec("jm1", O(1053), group="fresh3"),
+    Spec("cylinder_bands", O(6332), group="fresh3"),
+    Spec("australian", O(40981), group="fresh3"),
+    Spec("ionosphere", O(59), group="fresh3"),
+    Spec("sonar", O(40), group="fresh3"),
+    Spec("heart_statlog", O(53), group="fresh3"),
+    Spec("hill_valley", O(1479), group="fresh3"),
+    Spec("speed_dating", O(40536), group="fresh3", drop=("decision", "decision_o")),  # match = both decisions
+    Spec("hepatitis", O(55), group="fresh3"),
+    Spec("planes2d", O(215), task="regression", group="fresh3"),
+    Spec("puma32H", O(308), task="regression", group="fresh3"),
+    Spec("sulfur", O(23515), task="regression", group="fresh3"),
+    Spec("superconduct", O(43174), task="regression", group="fresh3"),
+    Spec("airfoil", O(44957), task="regression", group="fresh3"),
+    Spec("moneyball", O(41021), task="regression", group="fresh3"),
+    Spec("socmob", O(541), task="regression", group="fresh3"),
+    Spec("quake", O(209), task="regression", group="fresh3"),
+    Spec("bodyfat", O(560), task="regression", group="fresh3"),
+    Spec("auto_price", O(195), task="regression", group="fresh3"),
     # --- check: diabetes130 with its row and patient ids dropped (patients repeat across rows; a count per
     # patient over all rows includes the later encounters the readmission label is about)
     Spec("diabetes130_noid", O(4541), task="multiclass", drop=["encounter_id", "patient_nbr"], max_rows=100_000, group="check"),

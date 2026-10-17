@@ -221,6 +221,43 @@ def arm_ffp(label):
     return arm
 
 
+def arm_ffpc(label):
+    """As ffp, with the search's output cached per split (H2H_FF_CACHE names the search version, which must
+    be the same FeatureForge search code for every snapshot sharing it): proposal-check variants then reuse
+    one search run. Same result as ffp when the search code matches (the check runs on the same frames)."""
+    def arm(tr, te, meta, budget, threads):
+        src = Path(os.environ.get("FF_SNAP", "/home/user/ff_snap")) / label / "src"
+        sys.path.insert(0, str(src))
+        from featureforge import build_features
+        from featureforge import proposals as P
+        cache = Path(os.environ["H2H_ARM_DIR"]).parent / f"ffcache_{os.environ.get('H2H_FF_CACHE', 'v10')}"
+        if not (cache / "done").exists():
+            cache.mkdir(exist_ok=True)
+            ptr, pte = build_features(tr, te, Y, task=meta["task"], budget=budget, out_dir=str(cache / "ff_out"),
+                                      forge_kw={"n_jobs": threads})
+            pd.read_parquet(ptr).to_parquet(cache / "train.parquet")
+            pd.read_parquet(pte).to_parquet(cache / "test.parquet")
+            (cache / "done").write_text("ok")
+        A = pd.read_parquet(cache / "train.parquet")
+        y = A.pop(Y).to_numpy()
+        B = pd.read_parquet(cache / "test.parquet")[A.columns]
+        f = HERE / "llm" / f"{meta['name']}.py"
+        kept = []
+        if f.exists():
+            frames = P.compute(P.load(f), tr.drop(columns=[Y]), te)
+            task = meta["task"]
+            yy = (pd.factorize(pd.Series(y).astype("string"), sort=True)[0] if task == "multiclass" else y).astype(float)
+            kept = P.gate(A, yy, task, frames, threads=threads)
+            cols, n = dict(frames), len(A)
+            for lab, names in kept:
+                for c in names:
+                    A[c] = cols[lab][c].iloc[:n].to_numpy()
+                    B[c] = cols[lab][c].iloc[n:].to_numpy()
+            print(f"proposals kept: {', '.join(l for l, _ in kept)}", flush=True)
+        return A, B, dict(n_new=int(A.shape[1] - tr.shape[1] + 1), kept=[l for l, _ in kept])
+    return arm
+
+
 ARMS = {"llm": arm_llm, "featureforge": arm_featureforge, "openfe": arm_openfe, "autofeat": arm_autofeat,
         "featuretools": arm_featuretools}
 
@@ -240,10 +277,11 @@ def main():
     t0 = time.time()
     fn = (arm_ff_snapshot(a.arm.split(":", 1)[1]) if a.arm.startswith("ff:") else
           arm_llmff(a.arm.split(":", 1)[1]) if a.arm.startswith("llmff:") else
-          arm_ffp(a.arm.split(":", 1)[1]) if a.arm.startswith("ffp:") else ARMS[a.arm])
+          arm_ffp(a.arm.split(":", 1)[1]) if a.arm.startswith("ffp:") else
+          arm_ffpc(a.arm.split(":", 1)[1]) if a.arm.startswith("ffpc:") else ARMS[a.arm])
     A, B, info = fn(tr, te, meta, a.budget, a.threads)
     info["seconds"] = time.time() - t0
-    if a.arm == "featureforge" or a.arm.startswith(("ff:", "llmff:", "ffp:")):  # FeatureForge returns the full table (it may recode raw columns)
+    if a.arm == "featureforge" or a.arm.startswith(("ff:", "llmff:", "ffp:", "ffpc:")):  # FeatureForge returns the full table (it may recode raw columns)
         A.to_parquet(out / "train.parquet"), B.to_parquet(out / "test.parquet")
         info["full"] = True
     else:

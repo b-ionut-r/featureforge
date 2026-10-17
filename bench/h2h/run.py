@@ -125,7 +125,7 @@ def run_cell(name, seed, arm, root, budget, cap, threads, shuffle=False, raw_don
             ytr = pd.read_parquet(work / "train.parquet")[Y].to_numpy()
         out = work / arm.replace(":", "_")
         shutil.rmtree(out, ignore_errors=True)
-        cmd = [sys.executable if arm.startswith(("ff:", "llmff:", "ffp:")) else PY.get(arm, COMP_PY), str(HERE / "arms.py"), arm, str(work), "--budget", str(budget), "--threads", str(threads)]
+        cmd = [sys.executable if arm.startswith(("ff:", "llmff:", "ffp:", "ffpc:")) else PY.get(arm, COMP_PY), str(HERE / "arms.py"), arm, str(work), "--budget", str(budget), "--threads", str(threads)]
         t0 = time.time()
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
         try:
