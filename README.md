@@ -42,6 +42,11 @@ Instacart AUC 0.6915 → **0.8323**, Riiid AUC 0.612 → **0.723**, Microsoft Ma
 Springleaf AUC 0.7641 → **0.7962**, Avazu AUC 0.7443 → 0.7551 (0.7570), TalkingData AUC 0.9606 → **0.9694**,
 Elo RMSE 3.861 → 3.705 (3.688). Across suites of public tables: 22 OpenML tables +2.2%, 20 contest tables +3.8%.
 
+**Against other automatic feature tools** (same judge, [docs/benchmark.md](docs/benchmark.md)): on 20 public
+OpenML tables never used in development, mean held-out loss −17.0% against −6.5% for Featuretools, best
+average rank; on 63 tables including the OpenFE and CAAFE papers' tables, −6.9% against −5.0% for
+Featuretools and −4.3% before the dense blocks and cross-validated gate.
+
 West Nile's and Santander's best entries came from earlier versions of the code. The final version
 scores 0.7162 and 0.9161 there; Santander's gap is within run-to-run noise. Runtimes, memory peaks and
 the full tables are in [docs/results.md](docs/results.md).
