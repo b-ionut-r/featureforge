@@ -72,7 +72,10 @@ def make_split(name, seed, root):
         return d
     X, y, task, desc = load(name)
     strat = y if task != "regression" else None
-    if TIME_SPLIT:  # time-ordered table: the last 20% in time is held out, as a later test would be
+    if GROUP_SPLIT:  # repeated entities: whole entities are held out
+        from sklearn.model_selection import GroupShuffleSplit
+        itr, ite = next(GroupShuffleSplit(1, test_size=0.2, random_state=seed).split(X, groups=X[SPEC[name].entity]))
+    elif TIME_SPLIT:  # time-ordered table: the last 20% in time is held out, as a later test would be
         order = np.lexsort([pd.to_numeric(X[c], errors="coerce").fillna(-1).to_numpy() if X[c].dtype != object
                             else pd.to_datetime(X[c], errors="coerce").astype("int64").to_numpy() for c in SPEC[name].time[::-1]])
         cut = int(0.8 * len(X))
@@ -94,6 +97,7 @@ def make_split(name, seed, root):
 # AutoFeat's feature selection fits its candidate pool in memory: past these sizes it timed out at the cap or
 # crashed in every run, so it is not started (logged as "skipped", scored as the raw columns).
 TIME_SPLIT = os.environ.get("H2H_TIME_SPLIT") == "1"
+GROUP_SPLIT = os.environ.get("H2H_GROUP_SPLIT") == "1"
 AUTOFEAT_MAX = dict(rows=5_000, cols=30)
 
 

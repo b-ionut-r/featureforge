@@ -135,6 +135,9 @@ SPECS = [
     Spec("wine_red", O(40691), task="multiclass", group="fresh"),
     Spec("mushroom", O(24), group="fresh"),
     Spec("sylvine", O(41146), group="fresh"),
+    # --- check: diabetes130 with its row and patient ids dropped (patients repeat across rows; a count per
+    # patient over all rows includes the later encounters the readmission label is about)
+    Spec("diabetes130_noid", O(4541), task="multiclass", drop=["encounter_id", "patient_nbr"], max_rows=100_000, group="check"),
     # --- kaggle: whole contest train files (no row cap), a random 80/20 split as these contests' tests were
     Spec("santander_full", "kaggle:santander-customer-transaction-prediction/train.csv", "target", drop=["ID_code"],
          max_rows=None, group="kaggle"),
@@ -146,8 +149,11 @@ TIME_KEYS = {"bike_sharing": ["year", "month", "hour"], "kc_house": ["date_year"
              "kick": ["PurchDate"], "sf_crime": ["Year", "Month"], "wind": ["year", "month", "day"],
              "nyc_taxi_tip": ["lpep_pickup_datetime_day", "lpep_pickup_datetime_hour", "lpep_pickup_datetime_minute"],
              "house_prices": ["YrSold", "MoSold"], "ames": ["Yr.Sold", "Mo.Sold"]}
+# Tables whose rows repeat an entity: with --group-split whole entities are held out.
+GROUP_KEYS = {"diabetes130": "patient_nbr"}
 for _s in SPECS:
     _s.time = TIME_KEYS.get(_s.name, [])
+    _s.entity = GROUP_KEYS.get(_s.name)
 
 SPEC = {s.name: s for s in SPECS}
 

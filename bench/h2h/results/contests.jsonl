@@ -1,2 +1,5 @@
 {"loss": 0.24412364591213598, "auc": 0.7657697233779475, "case": "hc", "label": "raw", "n_cols": 120, "build_seconds": 0}
 {"loss": 0.23170235862765923, "auc": 0.8026900924533925, "case": "hc", "label": "v10", "n_cols": 1355, "build_seconds": 5208.795560121536}
+{"loss": 0.09833880462564294, "auc": 0.9318493524376773, "case": "ieee", "label": "raw", "n_cols": 432, "build_seconds": 0}
+{"loss": 0.0808264377302524, "auc": 0.9573006109643328, "case": "ieee", "label": "main", "n_cols": 721, "build_seconds": 2309.8962140083313}
+{"loss": 0.0808264377302524, "auc": 0.9573006109643328, "case": "ieee", "label": "v10", "n_cols": 721, "build_seconds": 3192.554676771164}
