@@ -221,7 +221,7 @@ def arm_ffp(label):
     return arm
 
 
-def arm_ffpc(label):
+def arm_ffpc(label, proposals=True):
     """As ffp, with the search's output cached per split (H2H_FF_CACHE names the search version, which must
     be the same FeatureForge search code for every snapshot sharing it): proposal-check variants then reuse
     one search run. Same result as ffp when the search code matches (the check runs on the same frames)."""
@@ -243,7 +243,7 @@ def arm_ffpc(label):
         B = pd.read_parquet(cache / "test.parquet")[A.columns]
         f = HERE / "llm" / f"{meta['name']}.py"
         kept = []
-        if f.exists():
+        if proposals and f.exists():
             frames = P.compute(P.load(f), tr.drop(columns=[Y]), te)
             task = meta["task"]
             yy = (pd.factorize(pd.Series(y).astype("string"), sort=True)[0] if task == "multiclass" else y).astype(float)
@@ -278,10 +278,11 @@ def main():
     fn = (arm_ff_snapshot(a.arm.split(":", 1)[1]) if a.arm.startswith("ff:") else
           arm_llmff(a.arm.split(":", 1)[1]) if a.arm.startswith("llmff:") else
           arm_ffp(a.arm.split(":", 1)[1]) if a.arm.startswith("ffp:") else
-          arm_ffpc(a.arm.split(":", 1)[1]) if a.arm.startswith("ffpc:") else ARMS[a.arm])
+          arm_ffpc(a.arm.split(":", 1)[1]) if a.arm.startswith("ffpc:") else
+          arm_ffpc(a.arm.split(":", 1)[1], proposals=False) if a.arm.startswith("ffc:") else ARMS[a.arm])
     A, B, info = fn(tr, te, meta, a.budget, a.threads)
     info["seconds"] = time.time() - t0
-    if a.arm == "featureforge" or a.arm.startswith(("ff:", "llmff:", "ffp:", "ffpc:")):  # FeatureForge returns the full table (it may recode raw columns)
+    if a.arm == "featureforge" or a.arm.startswith(("ff:", "llmff:", "ffp:", "ffpc:", "ffc:")):  # FeatureForge returns the full table (it may recode raw columns)
         A.to_parquet(out / "train.parquet"), B.to_parquet(out / "test.parquet")
         info["full"] = True
     else:

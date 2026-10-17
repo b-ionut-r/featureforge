@@ -178,6 +178,26 @@ SPECS = [
     Spec("quake", O(209), task="regression", group="fresh3"),
     Spec("bodyfat", O(560), task="regression", group="fresh3"),
     Spec("auto_price", O(195), task="regression", group="fresh3"),
+    # --- fresh4: tiny tables (100-470 rows), fixed on Oct 17 after FeatureForge lost on fresh3's smallest
+    # tables (sonar, hepatitis) and before any change for that or any result on these
+    Spec("breast_cancer", O(13), group="fresh4"),
+    Spec("lymph", O(10), task="multiclass", group="fresh4"),
+    Spec("heart_c", O(49), group="fresh4"),
+    Spec("heart_h", O(51), group="fresh4"),
+    Spec("colic", O(27), group="fresh4"),
+    Spec("vote", O(56), group="fresh4"),
+    Spec("glass", O(41), task="multiclass", group="fresh4"),
+    Spec("wine", O(187), task="multiclass", group="fresh4"),
+    Spec("parkinsons", O(1488), group="fresh4"),
+    Spec("fertility", O(1473), group="fresh4"),
+    Spec("machine_cpu", O(230), task="regression", group="fresh4"),
+    Spec("auto_mpg", O(196), task="regression", group="fresh4"),
+    Spec("cloud", O(210), task="regression", group="fresh4"),
+    Spec("echo_months", O(222), task="regression", group="fresh4"),
+    Spec("spectf", O(1600), group="fresh4"),
+    Spec("haberman", O(43), group="fresh4"),
+    Spec("sa_heart", O(1498), group="fresh4"),
+    Spec("wholesale", O(1511), group="fresh4"),
     # --- check: diabetes130 with its row and patient ids dropped (patients repeat across rows; a count per
     # patient over all rows includes the later encounters the readmission label is about)
     Spec("diabetes130_noid", O(4541), task="multiclass", drop=["encounter_id", "patient_nbr"], max_rows=100_000, group="check"),
