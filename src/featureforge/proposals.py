@@ -15,7 +15,6 @@ that only repeats what the search found is not added.
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 from typing import List, Tuple
 
 import numpy as np
@@ -24,6 +23,8 @@ import pandas as pd
 from featureforge.screens import _winsor
 
 MAX_ROWS = 20_000  # rows the check fits on: a uniform sample past this
+ROUNDS = 1000  # boosting rounds per fit: tables of near-repeated rows (Mice Protein's 15 readings per mouse)
+# never stop early, and 3000 rounds made one 700-row fit take a minute
 
 
 def load(path) -> list:
@@ -58,7 +59,7 @@ def _oof_rows(task, F, y, folds, seed, threads):
     rows = np.zeros(len(F))
     for tr, va in folds:
         rows[va] = _holdout_rows(task, F.iloc[tr].reset_index(drop=True), y[tr],
-                                 F.iloc[va].reset_index(drop=True), y[va], seed, threads)
+                                 F.iloc[va].reset_index(drop=True), y[va], seed, threads, ROUNDS)
     return rows
 
 
@@ -81,7 +82,7 @@ def _gate_holdout(out_tr, y, task, frames, holdout, seed, threads, z_needed):
 
     def rows(F):
         return _holdout_rows(task, F.iloc[sel].reset_index(drop=True), ys, F.iloc[gat].reset_index(drop=True), yg,
-                             seed, threads)
+                             seed, threads, ROUNDS)
     strat = None if task == "regression" else yg
     base = out_tr
     cur = r0 = rows(base)

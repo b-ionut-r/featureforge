@@ -2965,7 +2965,7 @@ class FeatureForge:
         return pd.DataFrame(self.history_)
 
 
-def _holdout_rows(task, Ftr, ytr, Fva, yva, seed, threads):
+def _holdout_rows(task, Ftr, ytr, Fva, yva, seed, threads, rounds=3000):
     """Per-row loss on ``Fva`` of a LightGBM fitted on ``Ftr`` (early-stopped on a fifth of it, then refitted)."""
     import lightgbm as lgb
     Ftr, Fva = Ftr.copy(), Fva.copy()
@@ -2983,7 +2983,7 @@ def _holdout_rows(task, Ftr, ytr, Fva, yva, seed, threads):
     perm = np.random.default_rng(seed).permutation(len(Ftr))
     cut = int(0.8 * len(Ftr))
     a, b = np.sort(perm[:cut]), np.sort(perm[cut:])
-    m = lgb.train(P, lgb.Dataset(Ftr.iloc[a], ytr[a]), 3000, valid_sets=[lgb.Dataset(Ftr.iloc[b], ytr[b])],
+    m = lgb.train(P, lgb.Dataset(Ftr.iloc[a], ytr[a]), rounds, valid_sets=[lgb.Dataset(Ftr.iloc[b], ytr[b])],
                   callbacks=[lgb.early_stopping(100, verbose=False)])
     full = lgb.train(P, lgb.Dataset(Ftr, ytr), max(1, int(m.best_iteration * 1.1)))
     return _row_loss(task, yva, full.predict(Fva, raw_score=True))

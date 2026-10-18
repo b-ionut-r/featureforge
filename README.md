@@ -45,7 +45,8 @@ Elo RMSE 3.861 → 3.705 (3.688). Across suites of public tables: 22 OpenML tabl
 **Against other automatic feature tools** (same judge, [docs/benchmark.md](docs/benchmark.md)): on 20 public
 OpenML tables never used in development, mean held-out loss −17.0% against −6.5% for Featuretools, best
 average rank; on 63 tables including the OpenFE and CAAFE papers' tables, −6.9% against −5.0% for
-Featuretools and −4.3% before the dense blocks and cross-validated gate.
+Featuretools and −4.3% before the dense blocks and cross-validated gate. With LLM-written domain proposals checked on top
+of the search, 20 more unseen tables average −14.4% (search alone −7.3%, the LLM's features alone −11.4%); with one Claude API call per table, as the product makes it, 19 further unseen tables average −14.1% (search alone −11.9%).
 
 West Nile's and Santander's best entries came from earlier versions of the code. The final version
 scores 0.7162 and 0.9161 there; Santander's gap is within run-to-run noise. Runtimes, memory peaks and
@@ -97,6 +98,27 @@ train_path, test_path = build_features(
     budget=900, out_dir="features",
 )
 ```
+
+Domain knowledge can go in as a proposals file: Python functions written by a person or an LLM from the
+column names and description, each kept only if it beats the search's output on cross-validation
+(`featureforge --proposals proposals.py` on the command line):
+
+```python
+# proposals.py
+def win_rate(df):          # takes the raw training then test rows, returns one value per row
+    return df["wins"] / (df["wins"] + df["losses"]).replace(0, float("nan"))
+
+PROPOSALS = [("win_rate", win_rate)]
+```
+
+```python
+build_features("train.parquet", "test.parquet", target="y", proposals="proposals.py")
+```
+
+Or let Claude write the file: with `ANTHROPIC_API_KEY` set (and `pip install -e .[llm]`), `build_features`
+asks Claude for proposals from the column names, types, a few rows and an optional `description=`, with no
+target values. The file is saved as `features/proposals_llm.py`, reused on reruns, and judged by the same
+check. `llm="off"` (`--llm off`) disables it; without a key nothing changes.
 
 The search alone, on one table:
 
@@ -154,6 +176,8 @@ model in detail.
 src/featureforge/
   forge.py            FeatureForge: the gated, residual-guided search
   pipeline.py         build_features: related tables → blocks → forecasting check → search
+  proposals.py        outside domain features, kept only if they pass a check on top of the search
+  llm.py              optional: Claude writes the proposals file from the schema (Anthropic API)
   cli.py              the `featureforge` command
   io.py               reading tables the same way on pandas 2 and 3
   screens.py          column families, slots, geo pairs, synthetic rows, gate statistics
@@ -180,7 +204,7 @@ src/featureforge/
     panel.py          intraday panels
     returns.py        price paths
   utils/              text views, memory accounting and key-range streaming, task inference
-tests/                pytest suite (77 tests)
+tests/                pytest suite (89 tests)
 examples/             runnable quickstart
 docs/                 architecture, families, results
 ```

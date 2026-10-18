@@ -94,6 +94,76 @@ matters (Jungle Chess +98%, Tic-Tac-Toe +99%, Balance Scale +99.96%, churn +32%)
 meaning is wrong (spambase −10.5%). Several proposals used outside knowledge (the Friedman formula, Kaggle
 forum decodings), flagged in [bench/h2h/llm/README.md](../bench/h2h/llm/README.md).
 
+## Round 2: domain proposals and tiny tables
+
+Two more changes, each proven on tables fixed before it was designed (three new sets: `fresh2`, `fresh3`,
+`fresh4` in `bench/h2h/datasets.py`).
+
+1. **Domain proposals** (`build_features(..., proposals="file.py")`, `--proposals`). A Python file of
+   feature functions, written by a person or an LLM from the column names, description and a few rows,
+   is evaluated on top of FeatureForge's output. Each proposal is kept only if it lowers the 5-fold CV loss
+   of the search's output with per-row z >= 1, and the kept set must win again on new folds against the
+   search's output alone. CAAFE keeps a proposal when the CV loss drops at all; that kept spambase's guessed
+   word features (−10.5% held out). Judged on top of the search, a proposal that repeats what the search
+   found is not added (adding the LLM's columns as raw inputs lost vehicles 24% → 11%).
+3. **Optional Claude API step** (`featureforge.llm`, on when `ANTHROPIC_API_KEY` is set, `--llm off` to
+   disable). Without a proposals file, FeatureForge sends Claude the same blind view of the table (task,
+   description, column types and examples, eight rows, no target), runs the returned file on 200 sample
+   rows, sends crashes back once or twice for a corrected file, saves it as `proposals_llm.py` in the
+   output directory and reuses it on reruns. Without a key the output is byte-identical to before.
+4. **Proposals on time-ordered or new-group data are judged on FeatureForge's own split** (fit on the
+   search rows, scored on the gate rows in time order, and the kept set must also gain over the later half
+   of them). On the IEEE-CIS window random folds kept two proposals at z = +3.4 that then lost held out.
+   The check also caps each fit at 1,000 boosting rounds: on tables of near-repeated rows (Mice Protein's
+   15 readings per mouse) early stopping never fired and one 700-row fit took a minute.
+2. **Cross-validated gate down to 60 rows.** Below 200 rows no gate rows were held out at all, so the
+   search's picks went in unjudged (Sonar −18% on `fresh3`, now 0%): on the 18 tiny tables of `fresh4` (100-470 rows, 5 splits each) the
+   old version averaged −6.2%, with Fertility −58%, Parkinsons −51%, Wine −35%. Now +2.5%, worst −4.6%.
+
+The LLM proposals below were written blind by Claude (schema, description, eight rows; no scores) for every
+table, before it was scored. Several use outside knowledge (Halstead's formula, the splice-site consensus,
+Siri's equation, Pythagorean expectation); each such use is marked in the file.
+
+| Set (tables) | Search only | Search + proposals | LLM features alone (CAAFE-style) | Featuretools |
+|---|---|---|---|---|
+| 63 tables, seed 0 (proposal check designed here) | +7.4% | **+11.2%** (worst −0.6%) | +8.8% (worst −10.5%) | +5.1% |
+| `fresh2`, 20 unseen, 3 seeds | +7.3% | **+14.4%** (first check) | +11.4% | +4.4% |
+| `fresh3`, 20 unseen, 3 seeds | +6.4% (was +4.7%) | +9.9% (worst −2.8%) | **+10.2%** (worst −4.1%) | +2.7% |
+| `fresh4`, 18 tiny, 5 splits | +2.5% (was −6.2%) | +2.3% | **+4.8%** | +1.8% |
+| `fresh5`, 19 unseen, 3 seeds, **one-shot proposals from the product's prompt** | +11.9% | **+14.1%** (worst −2.9%) | +12.8% (worst −3.6%) | +2.0% |
+| `fresh5`, same, column names masked to f_1…f_n, no description | +11.9% | +12.9% (worst −20.6%) | | |
+
+The gains with proposals come where knowing the domain matters: Jungle Chess +38% → +97%, Tic-Tac-Toe +41%
+→ +99.5%, Car evaluation 0 → +90%, the `mv` generator +36% → +58%, Hill-Valley +52% → +100%, Ionosphere −3.5%
+→ +14.5%, DNA splice junctions 0 → +13%, churn +10% → +30%. Where the LLM's guess is wrong the check keeps the
+search's output: Ionosphere's LLM features alone lost 14.5%.
+
+**Limits.** On `fresh3` and the tiny tables, the LLM's features alone beat search + proposals on average: the
+check judges proposals against the search's output with a z >= 1 bar, and on Socmob (LLM alone +21%) and
+Hepatitis (+13%) it kept little. On tables under 200 rows the check itself is noisy (Parkinsons −14%, SPECTF
+−8% with proposals against 0% and −5% without). The proposals arm adds a median 1-2 minutes per table.
+Contests are unaffected unless a proposals file is passed: Home Credit and the IEEE-CIS window build
+byte-identical output to the PR #1 version, and the tiny-table change only applies below 200 rows.
+
+**The in-product step on unseen tables (`fresh5`).** These 20 tables were fixed before the API step was
+scored. For each, Claude got exactly the prompt FeatureForge sends and answered once, without running any
+code; all 20 files ran on the first try. Search + proposals beat both the search alone and the LLM's
+features alone on average, but the gap is smaller than the bench files' on `fresh2` (+7 points there, +2
+here): bench files were written by an agent that could run its code against the table, the product gets one
+reply plus repairs. Big wins: Mozilla4 +63% → +74%, Naval propulsion +48% → +60%, Mice Protein 0 → +18%,
+Auction +53% → +59%. With column names masked the gain halves (+1.0 point instead of +2.2), and that is an
+upper bound: Claude still recognised 15 of these 20 public tables from their values. On Mice Protein the masked
+proposals passed both checks and lost 21% (losses near 0.02, 216 test rows: a few confident misses decide it).
+Grid Stability is not in the averages (Featuretools failed on it).
+
+**Contests.** One-shot proposals from the same prompt, on top of the PR #1 build: Home Credit kept none (output
+unchanged; the check took 70 minutes over 1,355 columns). IEEE-CIS window: held-out AUC 0.9573 → **0.9585**,
+loss 0.0808 → 0.0794 (time of day, amount cents, frequency encodings, C-count summaries kept; the search's own
+columns are byte-identical). Before the time-split fix the same file scored 0.9572. Two IEEE proposals used the
+winners' published client-id trick; both were rejected.
+
+**Tried and dropped:** pair blocks on time-ordered tables (eight time-split tables +0.28% against +0.23%).
+
 ## Corrections and limits
 
 - **diabetes130.** Patients repeat across rows, and both FeatureForge versions counted each patient's visits

@@ -169,7 +169,7 @@ def arm_llm(tr, te, meta, budget, threads):
     cross-validated loss on the training rows, tried in the order proposed."""
     X, y = tr.drop(columns=[Y]), tr[Y].to_numpy()
     allX = pd.concat([X, te], ignore_index=True)
-    props = llm_features(meta["name"], allX)
+    props = [(label, v.add_prefix(f"{label}__")) for label, v in llm_features(meta["name"], allX)]  # unique names
     n = len(X)
     cur = X.reset_index(drop=True)
     best = _cv_loss(cur, y, meta["task"], threads)
@@ -221,7 +221,7 @@ def arm_ffp(label):
     return arm
 
 
-def arm_ffpc(label, proposals=True):
+def arm_ffpc(label, proposals=True, masked=False):
     """As ffp, with the search's output cached per split (H2H_FF_CACHE names the search version, which must
     be the same FeatureForge search code for every snapshot sharing it): proposal-check variants then reuse
     one search run. Same result as ffp when the search code matches (the check runs on the same frames)."""
@@ -241,10 +241,14 @@ def arm_ffpc(label, proposals=True):
         A = pd.read_parquet(cache / "train.parquet")
         y = A.pop(Y).to_numpy()
         B = pd.read_parquet(cache / "test.parquet")[A.columns]
-        f = HERE / "llm" / f"{meta['name']}.py"
+        f = HERE / ("llm_masked" if masked else "llm") / f"{meta['name']}.py"
         kept = []
         if proposals and f.exists():
-            frames = P.compute(P.load(f), tr.drop(columns=[Y]), te)
+            rtr, rte = tr.drop(columns=[Y]), te
+            if masked:  # proposals written from a schema with columns renamed f_1..f_n and no description
+                names = {c: f"f_{i + 1}" for i, c in enumerate(rtr.columns)}
+                rtr, rte = rtr.rename(columns=names), rte.rename(columns=names)
+            frames = P.compute(P.load(f), rtr, rte)
             task = meta["task"]
             yy = (pd.factorize(pd.Series(y).astype("string"), sort=True)[0] if task == "multiclass" else y).astype(float)
             kept = P.gate(A, yy, task, frames, threads=threads)
@@ -279,10 +283,11 @@ def main():
           arm_llmff(a.arm.split(":", 1)[1]) if a.arm.startswith("llmff:") else
           arm_ffp(a.arm.split(":", 1)[1]) if a.arm.startswith("ffp:") else
           arm_ffpc(a.arm.split(":", 1)[1]) if a.arm.startswith("ffpc:") else
+          arm_ffpc(a.arm.split(":", 1)[1], masked=True) if a.arm.startswith("ffpm:") else
           arm_ffpc(a.arm.split(":", 1)[1], proposals=False) if a.arm.startswith("ffc:") else ARMS[a.arm])
     A, B, info = fn(tr, te, meta, a.budget, a.threads)
     info["seconds"] = time.time() - t0
-    if a.arm == "featureforge" or a.arm.startswith(("ff:", "llmff:", "ffp:", "ffpc:", "ffc:")):  # FeatureForge returns the full table (it may recode raw columns)
+    if a.arm == "featureforge" or a.arm.startswith(("ff:", "llmff:", "ffp:", "ffpc:", "ffc:", "ffpm:")):  # FeatureForge returns the full table (it may recode raw columns)
         A.to_parquet(out / "train.parquet"), B.to_parquet(out / "test.parquet")
         info["full"] = True
     else:
