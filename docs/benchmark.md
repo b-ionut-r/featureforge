@@ -131,7 +131,7 @@ Siri's equation, Pythagorean expectation); each such use is marked in the file.
 | `fresh3`, 20 unseen, 3 seeds | +6.4% (was +4.7%) | +9.9% (worst −2.8%) | **+10.2%** (worst −4.1%) | +2.7% |
 | `fresh4`, 18 tiny, 5 splits | +2.5% (was −6.2%) | +2.3% | **+4.8%** | +1.8% |
 | `fresh5`, 19 unseen, 3 seeds, **one-shot proposals from the product's prompt** | +11.9% | **+14.1%** (worst −2.9%) | +12.8% (worst −3.6%) | +2.0% |
-| `fresh5`, same, column names masked to f_1…f_n, no description | +11.9% | +12.9% (worst −20.6%) | | |
+| `fresh5`, same, column names masked to f_1…f_n, no description (before the skip rule) | +11.9% | +12.9% (worst −20.6%) | | |
 
 The gains with proposals come where knowing the domain matters: Jungle Chess +38% → +97%, Tic-Tac-Toe +41%
 → +99.5%, Car evaluation 0 → +90%, the `mv` generator +36% → +58%, Hill-Valley +52% → +100%, Ionosphere −3.5%
@@ -154,7 +154,10 @@ reply plus repairs. Big wins: Mozilla4 +63% → +74%, Naval propulsion +48% → 
 Auction +53% → +59%. With column names masked the gain halves (+1.0 point instead of +2.2), and that is an
 upper bound: Claude still recognised 15 of these 20 public tables from their values. On Mice Protein the masked
 proposals passed both checks and lost 21% (losses near 0.02, 216 test rows: a few confident misses decide it).
-Grid Stability is not in the averages (Featuretools failed on it).
+Grid Stability is not in the averages (Featuretools failed on it). Since then the API step is skipped when most column names are placeholders (f_1, V12, feature_3, Var7) and
+no description is given, so on such tables the output is the search's alone (masked `fresh5`: +11.9%, worst
+−0.3%). With a description the call still runs: the `fresh2` wins on `mv`, DNA and Hill-Valley came from
+anonymous columns plus their descriptions.
 
 **Contests.** One-shot proposals from the same prompt, on top of the PR #1 build: Home Credit kept none (output
 unchanged; the check took 70 minutes over 1,355 columns). IEEE-CIS window: held-out AUC 0.9573 → **0.9585**,

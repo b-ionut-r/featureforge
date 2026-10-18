@@ -11,6 +11,9 @@ folds, and the kept set must hold again on new folds. A useless or harmful propo
 The written file is saved as ``<out_dir>/proposals_llm.py`` and reused when present, so a rerun reads the
 same proposals and builds the same features. Delete it to ask again.
 
+Skipped when most column names are placeholders (f_1, V12, feature_3) and no description is given: there is
+nothing for Claude to reason from.
+
 The code Claude writes is executed on your data, like any proposals file. Read it if that matters to you.
 """
 from __future__ import annotations
@@ -123,6 +126,9 @@ def write(raw_tr: pd.DataFrame, raw_te: pd.DataFrame, task: str, out_path, *, na
     try:
         client = client or _client()
         model = model or os.environ.get("FEATUREFORGE_LLM_MODEL") or MODEL
+        if not informative(raw_tr.columns, description):
+            print("llm proposals: skipped (column names are placeholders and no description was given)", flush=True)
+            return None
         allx = pd.concat([raw_tr, raw_te], ignore_index=True)
         sample = allx.sample(min(200, len(allx)), random_state=0).reset_index(drop=True)
         messages = [{"role": "user", "content": schema(raw_tr, task, name, description)}]
@@ -145,6 +151,19 @@ def write(raw_tr: pd.DataFrame, raw_te: pd.DataFrame, task: str, out_path, *, na
     except Exception as e:  # noqa: BLE001  an outside service: any failure means no proposals, never a crash
         print(f"llm proposals: skipped ({repr(e)[:200]})", flush=True)
         return None
+
+
+_GENERIC = re.compile(r"^(f|v|x|c|n|a|var|feat|feature|col|column|attr|attribute|in|input|cat|num|cont|field)?"
+                      r"[\s_\-.]?\d+$", re.I)
+
+
+def informative(columns, description: Optional[str] = None) -> bool:
+    """False when most column names are placeholders (f_1, V12, feature_3, Var7, 0) and no description is given:
+    Claude then has nothing to reason from, and on such tables its guesses only added noise (masked Mice
+    Protein: proposals passed both checks and lost 21% held out)."""
+    names = [str(c) for c in columns]
+    generic = sum(bool(_GENERIC.match(c.strip())) for c in names)
+    return bool(description and description.strip()) or generic < 0.5 * max(len(names), 1)
 
 
 def wanted(mode: str) -> bool:

@@ -102,3 +102,14 @@ def test_key_set_writes_checks_and_reuses(tmp_path, monkeypatch, capsys):
     assert "proposal price_per_unit (1 columns)" in capsys.readouterr().out  # judged by the usual check
     build_features(tr, X.iloc[1000:], "y", budget=20, out_dir=tmp_path)  # reuses the saved file
     assert len(rec.requests) == 1
+
+
+def test_placeholder_names_without_description_skip_the_call(tmp_path):
+    assert not L.informative(["f_1", "f_2", "V3", "feature_4", "x5"])
+    assert L.informative(["f_1", "f_2"], description="sensor readings from a turbine")
+    assert L.informative(["units", "spend", "f_3"])
+    X, _ = _data()
+    X.columns = ["feature_1", "feature_2", "feature_3"]
+    rec = Recorded(GOOD)
+    assert L.write(X.iloc[:1000], X.iloc[1000:], "binary", tmp_path / "p.py", client=rec) is None
+    assert rec.requests == []

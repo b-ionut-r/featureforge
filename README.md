@@ -118,7 +118,8 @@ build_features("train.parquet", "test.parquet", target="y", proposals="proposals
 Or let Claude write the file: with `ANTHROPIC_API_KEY` set (and `pip install -e .[llm]`), `build_features`
 asks Claude for proposals from the column names, types, a few rows and an optional `description=`, with no
 target values. The file is saved as `features/proposals_llm.py`, reused on reruns, and judged by the same
-check. `llm="off"` (`--llm off`) disables it; without a key nothing changes.
+check. It is skipped when most column names are placeholders (f_1, V12) and no description is given. `llm="off"`
+(`--llm off`) disables it; without a key nothing changes.
 
 The search alone, on one table:
 
