@@ -60,14 +60,15 @@ def split(case):
     (d / "meta.json").write_text(json.dumps(meta))
 
 
-def arm(case, label, src, budget):
+def arm(case, label, src, budget, proposals=None):
     d = ROOT / case
     meta = json.loads((d / "meta.json").read_text())
     sys.path.insert(0, src)
     from featureforge import build_features
     t0 = time.time()
     build_features(str(d / "train.parquet"), str(d / "test.parquet"), Y, id=meta["id"], tables=meta["tables"] or None,
-                   task=meta["task"], budget=budget, out_dir=str(d / label))
+                   task=meta["task"], budget=budget, out_dir=str(d / label),
+                   **({"proposals": proposals} if proposals else {}))
     (d / label / "seconds.json").write_text(json.dumps(dict(seconds=time.time() - t0)))
 
 
@@ -100,6 +101,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd"), ap.add_argument("--case"), ap.add_argument("--label"), ap.add_argument("--src")
     ap.add_argument("--budget", type=float, default=900)
+    ap.add_argument("--proposals", default=None)
     a = ap.parse_args()
-    {"split": lambda: split(a.case), "arm": lambda: arm(a.case, a.label, a.src, a.budget),
+    {"split": lambda: split(a.case), "arm": lambda: arm(a.case, a.label, a.src, a.budget, a.proposals),
      "judge": lambda: judge_cell(a.case, a.label)}[a.cmd]()

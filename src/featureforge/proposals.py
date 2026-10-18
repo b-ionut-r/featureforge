@@ -62,12 +62,60 @@ def _oof_rows(task, F, y, folds, seed, threads):
     return rows
 
 
-def gate(out_tr: pd.DataFrame, y, task: str, frames, seed: int = 0, threads: int = 4, z_needed: float = 1.0):
+def _z(d):
+    return float(d.mean() / (d.std(ddof=1) / np.sqrt(len(d)) + 1e-300)) if d.std() > 0 else 0.0
+
+
+def _gate_holdout(out_tr, y, task, frames, holdout, seed, threads, z_needed):
+    """Time-ordered or new-group tests: fit on the search's rows, judge on FeatureForge's own gate rows (in time
+    order), and the kept set must also gain over the later half of them."""
+    from featureforge.forge import _holdout_rows
+    sel, gat = (np.asarray(a) for a in holdout)
+    sel = sel[-MAX_ROWS:]  # the latest search rows
+    if len(gat) > 2 * MAX_ROWS:
+        gat = gat[np.linspace(0, len(gat) - 1, 2 * MAX_ROWS).astype(int)]
+    n = len(out_tr)
+    ys, yg = y[sel], y[gat]
+    if len(sel) * (out_tr.shape[1] + 20) <= 5_000_000:
+        threads = 1
+
+    def rows(F):
+        return _holdout_rows(task, F.iloc[sel].reset_index(drop=True), ys, F.iloc[gat].reset_index(drop=True), yg,
+                             seed, threads)
+    strat = None if task == "regression" else yg
+    base = out_tr
+    cur = r0 = rows(base)
+    kept = []
+    for label, v in frames:
+        cand = pd.concat([base, v.iloc[:n].set_axis(base.index)], axis=1)
+        r = rows(cand)
+        z = _z(_winsor(cur - r, strat))
+        ok = (cur - r).mean() > 0 and z >= z_needed
+        print(f"proposal {label} ({v.shape[1]} columns): held-out loss {cur.mean():.6f} -> {r.mean():.6f} "
+              f"(z={z:+.2f}) -> {'kept' if ok else 'dropped'}", flush=True)
+        if ok:
+            base, cur = cand, r
+            kept.append((label, list(v.columns)))
+    if kept:
+        late = slice(len(gat) // 2, None)
+        ok = (r0[late] - cur[late]).mean() > 0
+        print(f"proposals on the later half of the held-out rows: loss {r0[late].mean():.6f} -> {cur[late].mean():.6f} "
+              f"-> {'kept' if ok else 'all dropped'}", flush=True)
+        if not ok:
+            kept = []
+    return kept
+
+
+def gate(out_tr: pd.DataFrame, y, task: str, frames, seed: int = 0, threads: int = 4, z_needed: float = 1.0,
+         holdout=None):
     """The proposals kept, in order: [(label, columns)]. ``out_tr`` is the training rows' feature frame,
-    ``frames`` the output of ``compute`` (training rows first)."""
+    ``frames`` the output of ``compute`` (training rows first). ``holdout`` is FeatureForge's (search rows, gate
+    rows) when the test lies in the future or holds new groups; proposals are then judged on that split."""
     from sklearn.model_selection import KFold, StratifiedKFold
     n = len(out_tr)
     y = np.asarray(y, dtype=float)
+    if holdout is not None:
+        return _gate_holdout(out_tr, y, task, frames, holdout, seed, threads, z_needed)
     idx = np.arange(n)
     if n > MAX_ROWS:
         idx = np.sort(np.random.default_rng(seed).choice(n, MAX_ROWS, replace=False))

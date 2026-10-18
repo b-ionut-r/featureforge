@@ -32,3 +32,19 @@ def test_confirmation_drops_a_lucky_pick():
              for i in range(10)]
     frames = P.compute(props, X.iloc[:600], X.iloc[600:])
     assert P.gate(X.iloc[:600].reset_index(drop=True), y[:600], "binary", frames, threads=1) == []
+
+
+def test_time_ordered_holdout_drops_a_proposal_that_stops_helping():
+    # The ratio drives the label in the first 70% of rows only; later labels are coin flips. Random folds would keep it; judged on the
+    # latest rows, as FeatureForge's time-ordered gate holds them out, it is dropped.
+    rng = np.random.default_rng(7)
+    n = 3000
+    X = pd.DataFrame({"a": rng.uniform(1, 10, n), "b": rng.uniform(1, 10, n), "c": rng.normal(size=n)})
+    early = np.arange(n) < 0.7 * n
+    y = np.where(early, X.a / X.b > 1, rng.random(n) > 0.5).astype(int)
+    frames = P.compute([("ratio", lambda d: d.a / d.b)], X, X.iloc[:0])
+    assert [l for l, _ in P.gate(X, y, "binary", frames, threads=1)] == ["ratio"]
+    holdout = (np.arange(int(0.8 * n)), np.arange(int(0.8 * n), n))
+    assert P.gate(X, y, "binary", frames, threads=1, holdout=holdout) == []
+    helpful = np.where(True, X.a / X.b > 1, 0).astype(int)
+    assert [l for l, _ in P.gate(X, helpful, "binary", frames, threads=1, holdout=holdout)] == ["ratio"]

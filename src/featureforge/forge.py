@@ -1600,6 +1600,16 @@ class FeatureForge:
         else:
             idx_sel, idx_gate = idx, np.array([], dtype=int)
 
+        # Time-ordered or new-group tests: outside proposals are judged on this same split, not on
+        # random folds (IEEE-CIS: proposals that cleared random folds at z=+3.4 lost held out).
+        self.holdout_ = None
+        if len(idx_gate) and (self.time_col_ is not None or self.group_col_ is not None):
+            hs, hg = np.asarray(idx_sel), np.asarray(idx_gate)
+            if self.time_col_ is not None:
+                tt = X[self.time_col_].to_numpy(dtype=float)
+                hs, hg = hs[np.argsort(tt[hs], kind="stable")], hg[np.argsort(tt[hg], kind="stable")]
+            self.holdout_ = (hs, hg)
+
         # Large tables: the search runs on the latest rows (time-ordered data), whole random
         # groups (new-entity tests) or a random sample, so that its CV fits leave room in the
         # budget for several rounds; the rows left out still feed label-free statistics.

@@ -198,6 +198,28 @@ SPECS = [
     Spec("haberman", O(43), group="fresh4"),
     Spec("sa_heart", O(1498), group="fresh4"),
     Spec("wholesale", O(1511), group="fresh4"),
+    # --- fresh5: fixed on Oct 18 before any result of the in-product LLM step (one API call from the
+    # product's prompt, no code runs by the writer), to test whether that step keeps the bench gains
+    Spec("mozilla4", O(1046), group="fresh5"),
+    Spec("wall_robot", O(1497), task="multiclass", group="fresh5"),
+    Spec("eeg_eye", O(1471), group="fresh5"),
+    Spec("telco_churn", O(42178), drop=["customerID"], group="fresh5"),
+    Spec("dresses", O(23381), drop=["Dress_ID"], group="fresh5"),
+    Spec("mice_protein", O(40966), task="multiclass", drop=["MouseID"], group="fresh5"),
+    Spec("compas", O(42193), group="fresh5"),
+    Spec("swd", O(1028), task="regression", group="fresh5"),
+    Spec("liver", O(8), task="regression", group="fresh5"),
+    Spec("auction", O(44958), task="regression", group="fresh5"),
+    Spec("concrete", O(44959), task="regression", group="fresh5"),
+    Spec("energy", O(44960), task="regression", group="fresh5"),
+    Spec("forest_fires", O(44962), task="regression", log=True, group="fresh5"),
+    Spec("protein", O(44963), task="regression", group="fresh5"),
+    Spec("music_geo", O(44965), task="regression", group="fresh5"),
+    Spec("student_por", O(44967), task="regression", group="fresh5"),
+    Spec("naval", O(44969), task="regression", group="fresh5"),
+    Spec("fish_tox", O(44970), task="regression", group="fresh5"),
+    Spec("grid_stab", O(44973), task="regression", group="fresh5"),
+    Spec("colleges", O(42727), task="regression", group="fresh5"),
     # --- check: diabetes130 with its row and patient ids dropped (patients repeat across rows; a count per
     # patient over all rows includes the later encounters the readmission label is about)
     Spec("diabetes130_noid", O(4541), task="multiclass", drop=["encounter_id", "patient_nbr"], max_rows=100_000, group="check"),

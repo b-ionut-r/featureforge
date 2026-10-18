@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 from typing import List, Optional
 
 from featureforge.pipeline import PipelineConfig, run
@@ -50,7 +51,17 @@ def parser() -> argparse.ArgumentParser:
                          "over small counts and their total), featureforge.blocks.lists; on from structure")
     ap.add_argument("--proposals", default=None,
                     help="Python file of domain features (PROPOSALS = [(label, fn)]), each kept only if it passes a CV check")
+    ap.add_argument("--llm", default="auto", choices=["auto", "on", "off"],
+                    help="without --proposals, ask Claude (Anthropic API) to write them from the schema: auto = when "
+                         "ANTHROPIC_API_KEY is set; the file is saved in --out-dir and reused (featureforge.llm)")
+    ap.add_argument("--description", default=None,
+                    help="the data's description for the LLM prompt: text, or a path to a text file")
+    ap.add_argument("--llm-model", default=None, help="Claude model for --llm (default featureforge.llm.MODEL)")
     return ap
+
+
+def _text(v: Optional[str]) -> Optional[str]:
+    return Path(v).read_text() if v and len(v) < 4096 and Path(v).is_file() else v
 
 
 def main(argv: Optional[List[str]] = None) -> None:
@@ -59,7 +70,8 @@ def main(argv: Optional[List[str]] = None) -> None:
                        child_models=a.child_models, task=a.task, log_target=a.log_target, budget=a.budget,
                        top_related=a.top_related, out_dir=a.out_dir, related_cache=a.related_cache,
                        forge_kw=json.loads(a.forge_kw), forecast=a.forecast, forecast_kw=json.loads(a.forecast_kw),
-                       history=a.history, panel=a.panel, lists=a.lists, proposals=a.proposals))
+                       history=a.history, panel=a.panel, lists=a.lists, proposals=a.proposals,
+                       llm=a.llm, description=_text(a.description), llm_model=a.llm_model))
 
 
 if __name__ == "__main__":

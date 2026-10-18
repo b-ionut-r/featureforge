@@ -304,6 +304,9 @@ class PipelineConfig:
     panel: str = "auto"
     lists: str = "auto"
     proposals: Optional[str] = None
+    llm: str = "auto"
+    description: Optional[str] = None
+    llm_model: Optional[str] = None
 
 
 def _load(src) -> pd.DataFrame:
@@ -338,7 +341,8 @@ def build_features(train, test, target: str, *, id: Optional[str] = None, tables
                    budget: float = 900, top_related: int = 200, out_dir: str = "features",
                    related_cache: Optional[str] = None, forge_kw: Optional[dict] = None, forecast: str = "auto",
                    forecast_kw: Optional[dict] = None, history: str = "auto", panel: str = "auto",
-                   lists: str = "auto", proposals: Optional[str] = None) -> Tuple[Path, Path]:
+                   lists: str = "auto", proposals: Optional[str] = None, llm: str = "auto",
+                   description: Optional[str] = None, llm_model: Optional[str] = None) -> Tuple[Path, Path]:
     """Build features for a contest and write them to ``out_dir``.
 
     ``train`` and ``test`` are CSV/parquet paths or DataFrames; ``train`` holds ``target``. ``test`` is the
@@ -350,7 +354,9 @@ def build_features(train, test, target: str, *, id: Optional[str] = None, tables
     ``history``, ``panel`` and ``lists`` are ``"auto"`` (on from the data's structure) or ``"off"``.
     ``proposals`` is a Python file of domain features written outside the search (``PROPOSALS = [(label, fn)]``,
     e.g. by an LLM from the schema); each is kept only if it passes a cross-validated check on top of the
-    search's output (see ``featureforge.proposals``).
+    search's output (see ``featureforge.proposals``). Without one, ``llm="auto"`` asks Claude to write it from
+    the schema when ``ANTHROPIC_API_KEY`` is set (``"on"`` / ``"off"`` force it; ``description`` is the data's
+    description for the prompt; see ``featureforge.llm``). Without a key the output is unchanged.
 
     Returns the paths of ``train_features.parquet`` (with the target) and ``test_features.parquet``.
     """
@@ -359,10 +365,10 @@ def build_features(train, test, target: str, *, id: Optional[str] = None, tables
                               budget=budget, top_related=top_related, out_dir=str(out_dir),
                               related_cache=related_cache, forge_kw=dict(forge_kw or {}), forecast=forecast,
                               forecast_kw=dict(forecast_kw or {}), history=history, panel=panel, lists=lists,
-                              proposals=proposals))
+                              proposals=proposals, llm=llm, description=description, llm_model=llm_model))
 
 
-def _add_proposals(cfg, out_tr, y, frames, test_path):
+def _add_proposals(cfg, out_tr, y, frames, test_path, holdout=None):
     """Proposals that pass the check on top of the training output, added to both outputs."""
     from featureforge import proposals as P
     from featureforge.utils.task import infer_task
@@ -370,7 +376,7 @@ def _add_proposals(cfg, out_tr, y, frames, test_path):
     yy = np.asarray(y, dtype=float)
     if task == "regression" and cfg.log_target:
         yy = np.log1p(np.clip(yy, 0, None))
-    kept = P.gate(out_tr, yy, task, frames)
+    kept = P.gate(out_tr, yy, task, frames, holdout=holdout)
     if not kept:
         return out_tr
     n = len(out_tr)
@@ -397,6 +403,20 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
         codes, labels = pd.factorize(as_text(y), sort=True)
         y, cfg.task = pd.Series(codes, name=cfg.target), "multiclass"
     prop_frames = None
+    if not cfg.proposals and cfg.llm != "off":
+        from featureforge import llm as L
+        if L.wanted(cfg.llm):
+            from featureforge.utils.task import infer_task
+            path = Path(cfg.out_dir) / L.FILE_NAME
+            raw = [F.drop(columns=[cfg.id]) if cfg.id and cfg.id in F.columns else F for F in (tr, te)]
+            if path.exists():
+                print(f"llm proposals: reusing {path}", flush=True)
+            else:
+                name = Path(str(cfg.train)).stem if not isinstance(cfg.train, pd.DataFrame) else "data"
+                L.write(*raw, cfg.task or infer_task(y), path, name=name, description=cfg.description,
+                        model=cfg.llm_model)
+            if path.exists():
+                cfg.proposals = str(path)
     if cfg.proposals:
         from featureforge import proposals as P
         raw = [F.drop(columns=[cfg.id]) if cfg.id and cfg.id in F.columns else F for F in (tr, te)]
@@ -808,14 +828,18 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
     out_te.to_parquet(out / "test_features.parquet")
     del out_te, Xte
     release_arrow()
+    holdout = None
     if not forecasting:
         out_tr = forge.transform_train(Xtr, release=True)
+        holdout = getattr(forge, "holdout_", None)
         del forge
     related(out_tr, "train.parquet")
     if spill is not None:
         shutil.rmtree(spill, ignore_errors=True)
-    if prop_frames:
-        out_tr = _add_proposals(cfg, out_tr, y, prop_frames, out / "test_features.parquet")
+    if prop_frames and forecasting:
+        print("proposals: skipped (the forecasting block has no held-out window to judge them on)", flush=True)
+    elif prop_frames:
+        out_tr = _add_proposals(cfg, out_tr, y, prop_frames, out / "test_features.parquet", holdout)
     out_tr[cfg.target] = labels[y.to_numpy()] if labels is not None else y.to_numpy()
     if cfg.id:
         out_tr.insert(0, cfg.id, ids_tr)
