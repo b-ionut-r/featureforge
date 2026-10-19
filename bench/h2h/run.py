@@ -37,7 +37,9 @@ PY = {"featureforge": sys.executable, "llm": sys.executable}
 def judge(Xtr, ytr, Xte, yte, task, seed, threads=4):
     """The pinned judge: LightGBM, early stopping on a random 15% of training rows, then three seeds
     refit on all training rows at 1.1x the best iteration, predictions averaged."""
-    Xtr, Xte = Xtr.copy(), Xte.copy()
+    lean = bool(os.environ.get("H2H_JUDGE_F32"))  # big cases: no copies, one binned dataset shared by every fit
+    if not lean:
+        Xtr, Xte = Xtr.copy(), Xte.copy()
     for c in Xtr.columns:
         if not pd.api.types.is_numeric_dtype(Xtr[c]) or pd.api.types.is_bool_dtype(Xtr[c]):
             a, b = (v.astype("string").fillna("__na__").astype(object) for v in (Xtr[c], Xte[c]))
@@ -52,11 +54,17 @@ def judge(Xtr, ytr, Xte, yte, task, seed, threads=4):
              max_cat_to_onehot=8, cat_smooth=50, **({"num_class": k} if k else {}))
     perm = np.random.default_rng(seed + 1).permutation(n)
     fit, va = np.sort(perm[: int(0.85 * n)]), np.sort(perm[int(0.85 * n):])
-    b = lgb.train(dict(P, seed=0), lgb.Dataset(Xtr.iloc[fit], ytr[fit]), 5000,
-                  valid_sets=[lgb.Dataset(Xtr.iloc[va], ytr[va])], callbacks=[lgb.early_stopping(200, verbose=False)])
+    if lean:
+        full = lgb.Dataset(Xtr, ytr, params=dict(P), free_raw_data=True).construct()
+        b = lgb.train(dict(P, seed=0), full.subset(fit), 5000, valid_sets=[full.subset(va)],
+                      callbacks=[lgb.early_stopping(200, verbose=False)])
+    else:
+        b = lgb.train(dict(P, seed=0), lgb.Dataset(Xtr.iloc[fit], ytr[fit]), 5000,
+                      valid_sets=[lgb.Dataset(Xtr.iloc[va], ytr[va])], callbacks=[lgb.early_stopping(200, verbose=False)])
     p = np.zeros((len(Xte), k)) if k else np.zeros(len(Xte))
     for s in range(3):
-        p += lgb.train(dict(P, seed=s), lgb.Dataset(Xtr, ytr), int(b.best_iteration * 1.1) + 1).predict(Xte) / 3
+        ds = full if lean else lgb.Dataset(Xtr, ytr)
+        p += lgb.train(dict(P, seed=s), ds, int(b.best_iteration * 1.1) + 1).predict(Xte) / 3
     if task == "multiclass":
         pp = np.clip(p, 1e-15, 1)
         pp /= pp.sum(1, keepdims=True)

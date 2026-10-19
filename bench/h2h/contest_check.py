@@ -112,6 +112,11 @@ def judge_cell(case, label):
     for X in (A, B):
         if meta["id"] in X.columns:
             X.drop(columns=[meta["id"]], inplace=True)
+    if os.environ.get("H2H_JUDGE_F32"):  # big cases: every numeric column as float32, for every arm alike
+        for X in (A, B):
+            for c in X.columns:
+                if pd.api.types.is_numeric_dtype(X[c]) and not pd.api.types.is_bool_dtype(X[c]) and X[c].dtype != np.float32:
+                    X[c] = X[c].astype(np.float32)
     r = judge(A, yt, B[A.columns], y, meta["task"], 0)
     secs = json.loads((d / label / "seconds.json").read_text())["seconds"] if label != "raw" else 0
     r.update(case=case, label=label, n_cols=A.shape[1], build_seconds=secs)

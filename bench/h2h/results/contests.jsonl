@@ -7,3 +7,4 @@
 {"loss": 0.07938741775654495, "auc": 0.9585258711094115, "case": "ieee", "label": "r2p", "n_cols": 752, "build_seconds": 3514.7848794460297}
 {"loss": 0.0808264377302524, "auc": 0.9573006109643328, "case": "ieee", "label": "b27", "n_cols": 721, "build_seconds": 1970.9133143424988}
 {"loss": 0.1088558747543588, "auc": 0.7990396683740896, "case": "hcs", "label": "raw", "n_cols": 222, "build_seconds": 0}
+{"loss": 0.10876190254273967, "auc": 0.7997001161784956, "case": "hcs", "label": "raw", "n_cols": 222, "build_seconds": 0}
