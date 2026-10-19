@@ -167,6 +167,35 @@ winners' published client-id trick; both were rejected.
 
 **Tried and dropped:** pair blocks on time-ordered tables (eight time-split tables +0.28% against +0.23%).
 
+## Round 3: contest-size tables
+
+**What was tried and dropped (search only, no LLM).** A 3x search budget gave byte-identical output on six
+50-80k-row contest copies and on the IEEE-CIS window (held-out AUC 0.9573 both): the search stops when its
+candidates run dry, not when time runs out. Three feature types from winners' write-ups (distinct counts and
+shares of one key within another, an SVD of key x key co-occurrence, hour of day/week from timestamps) moved 12
+contest copies from -2.97% to -3.12% loss vs raw: noise, not kept. Dropping raw columns a quick model ignores
+scored -0.5% to +1.9% on six wide tables: not kept.
+
+**Home Credit Credit Risk Model Stability** ($105k, 2024): base and static tables joined (1.22M training rows,
+222 columns), nine child tables (6.5M previous applications, 3.0M person rows, 7.7M tax-registry rows and
+smaller; the two credit-bureau-A tables left out), latest 20% of weeks held out (307,510 rows). PR #1's code
+was killed at 14 GB on the 15 GB bench after 5 minutes. Two memory fixes, both inert when memory suffices:
+
+- tables dropped to save memory are kept as a parsed copy on disk and read back from it (the same frame: 0.8 GB
+  read at 1.7 GB instead of 4.2 GB from its source parquet);
+- when the related columns would not fit (1,197 columns, 7.3 GB), a quick model on 100,000 training rows ranks
+  them and the best that fit in 40% of the memory are kept (605).
+
+| Home Credit Risk Stability, held-out later weeks | AUC | loss | build | peak memory |
+|---|---|---|---|---|
+| raw columns | 0.7997 | 0.10876 | – | – |
+| FeatureForge, PR #1 | killed | – | 5 min | 14 GB |
+| FeatureForge, round 3 | **0.8178** | **0.10636** (-2.2%) | 52 min | 12.9 GB |
+
+Both scored by the pinned judge in its lean mode (float32 columns, one binned dataset shared by its fits; same
+for every arm). Home Credit (2018) rebuilt with the fixes: no guard fires, related columns and held-out loss
+identical (0.231702).
+
 ## Corrections and limits
 
 - **diabetes130.** Patients repeat across rows, and both FeatureForge versions counted each patient's visits

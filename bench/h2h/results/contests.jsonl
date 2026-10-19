@@ -9,3 +9,4 @@
 {"loss": 0.1088558747543588, "auc": 0.7990396683740896, "case": "hcs", "label": "raw", "n_cols": 222, "build_seconds": 0}
 {"loss": 0.10876190254273967, "auc": 0.7997001161784956, "case": "hcs", "label": "raw", "n_cols": 222, "build_seconds": 0}
 {"loss": 0.10635553591138452, "auc": 0.8177882350503597, "case": "hcs", "label": "v17", "n_cols": 838, "build_seconds": 3105.94690489769}
+{"loss": 0.23170235862765923, "auc": 0.8026900924533925, "case": "hc", "label": "v17", "n_cols": 1355, "build_seconds": 4560.461189031601}

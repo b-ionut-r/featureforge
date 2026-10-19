@@ -189,6 +189,59 @@ def main_time(main: pd.DataFrame, ch: Child, given: str | None) -> str | None:
 CM_CHECK_PARENTS, CM_CHECK_ROWS = 60_000, 300_000
 
 
+def cut_related(A: list, y: np.ndarray, n_train: int, task: Optional[str], room: float) -> list:
+    """The related blocks cut to the columns a quick model uses most, when all of them would not fit in ``room``
+    bytes: a LightGBM fit on up to 100,000 training rows of every block ranks the columns by gain, and the best
+    are kept while they fit. Fewer related columns, never a kill (Home Credit Risk Stability: 1,189 related
+    columns over 1.5M rows, 7.3 GB, killed joining them on the 15 GB bench). A run whose blocks fit never reads
+    this."""
+    import lightgbm as lgb
+    from featureforge._lgb import _lgb_objective
+    need = sum(frame_bytes(F) for F in A)
+    if need <= room:
+        return A
+    rng = np.random.default_rng(0)
+    rows = np.sort(rng.choice(n_train, min(n_train, 100_000), replace=False))
+    names = [c for F in A for c in F.columns]
+    num = {c for F in A for c in F.columns if pd.api.types.is_numeric_dtype(F[c])}
+    M = np.empty((len(rows), len(names)), np.float32)
+    j = 0
+    for F in A:
+        for c in F.columns:
+            M[:, j] = F[c].to_numpy(dtype=np.float32, na_value=np.nan)[rows] if c in num else np.nan
+            j += 1
+    yy = np.asarray(y)[rows]
+    task = task or ("binary" if len(np.unique(yy)) == 2 else "regression")
+    k = int(np.nanmax(yy)) + 1 if task == "multiclass" else 0
+    p = dict(_lgb_objective(task, k), learning_rate=0.1, num_leaves=31, min_child_samples=50, feature_fraction=0.5,
+             verbose=-1, seed=0, deterministic=True, force_col_wise=True)
+    gain = lgb.train(p, lgb.Dataset(M, yy, free_raw_data=True), 200).feature_importance("gain")
+    del M
+    size = {c: frame_bytes(F[[c]]) for F in A for c in F.columns}
+    keep, used = set(), 0.0
+    for i in np.argsort(-gain, kind="stable"):
+        c = names[i]
+        if c not in num:      # (text kept as it was: the search reads it as categories)
+            keep.add(c)
+            used += size[c]
+    for i in np.argsort(-gain, kind="stable"):
+        c = names[i]
+        if c in num and gain[i] > 0 and used + size[c] <= room:
+            keep.add(c)
+            used += size[c]
+    print(f"memory guard: related columns cut to the {len(keep)} of {len(names)} a quick model uses most "
+          f"(whole: {need / 1e9:.1f} GB, room for {room / 1e9:.1f} GB)", flush=True)
+    out = []
+    while A:
+        F = A.pop(0)
+        cols = [c for c in F.columns if c in keep]
+        if cols:
+            out.append(F[cols])
+        del F
+        _trim_heap()
+    return out
+
+
 def join_columns(A: list) -> pd.DataFrame:
     """pd.concat(A, axis=1) of frames on one index, emptying A. When the copy does not fit next to the parts and
     every column is float32, the parts are copied one at a time into one float32 block, each dropped once copied:
@@ -477,8 +530,36 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
             # (not for a table read by key range: its rows never sit in memory together)
             cm_tables = [ch for ch in keyed if tr[ch.key].is_unique and ch.source is None]
 
+        # Tables dropped to save memory are written once as they were parsed (categories stay categories) and read
+        # back from that copy: the same frame, read at about twice its size instead of the source's parse (Home
+        # Credit Risk Stability's 6.5M previous applications: 0.8 GB as a frame, 4.2 GB to parse from its parquet,
+        # killed beside 7.3 GB of related columns; 1.7 GB read back from the copy).
+        spill: dict = {}
+        spill_dir = []
+
+        def keep_copy(name, df):
+            # (written a row group at a time: about 0.1 GB more for a 0.8 GB frame)
+            if name in spill or df is None or available_bytes() < 0.5 * frame_bytes(df):
+                return
+            if not spill_dir:
+                import tempfile
+                spill_dir.append(Path(tempfile.mkdtemp(prefix="featureforge_tables_")))
+            path = spill_dir[0] / f"{len(spill)}.parquet"
+            try:
+                df.to_parquet(path)
+                spill[name] = path
+            except Exception:  # noqa: BLE001  (no copy: read from the source again)
+                path.unlink(missing_ok=True)
+
+        def reread(name):
+            if name in spill:
+                df = pd.read_parquet(spill[name])
+                release_arrow()
+                return df
+            return read(src[name])
+
         def table(ch):
-            return Child(ch.name, read(src[ch.name]), key=ch.key, time=ch.time, children=ch.children, drop=ch.drop)
+            return Child(ch.name, reread(ch.name), key=ch.key, time=ch.time, children=ch.children, drop=ch.drop)
         # Keyed tables stay held while memory allows. When the free memory is short of twice the other tables held
         # and four times the table at hand, the others are dropped and each is read again at its own step, for its
         # matches and for its child-row models: the same file gives the same frame (all five of Home Credit's, about
@@ -499,10 +580,13 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
                     one_at_a_time = True
                     for o in keyed:
                         if o.source is None:
+                            keep_copy(o.name, o.df)
                             o.df = None
-                    _trim_heap()
+                            _trim_heap()
                 if ch.df is None:
-                    ch.df = read(src[ch.name])
+                    ch.df = reread(ch.name)
+                    if one_at_a_time:
+                        keep_copy(ch.name, ch.df)
             if ch.source is not None:
                 for j, Fs in enumerate(streamed_features(ch, cfg.history == "auto")):
                     Fs = Fs.reindex(both_main[ch.key].to_numpy()).set_index(both_main.index)
@@ -631,9 +715,15 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
         # of its rows: a concat per side of row slices copied every block twice more, consolidated and joined
         # (Home Credit's 1,200 related columns: the pipeline's peak before the search).
         if A:
+            # (room: 40% of what would be free without them, for the joined block next to its kept parts, then the
+            # search's copies)
+            A = cut_related(A, y.to_numpy(), len(tr), cfg.task,
+                            0.4 * (available_bytes() + sum(frame_bytes(F) for F in A)))
             rel = join_columns(A)
             rel_tr, rel_te = _rows(rel, 0, len(tr)), _rows(rel, len(tr), len(rel))
             del rel
+        if spill_dir:
+            shutil.rmtree(spill_dir[0], ignore_errors=True)
         print(f"related tables: {rel_tr.shape[1]} columns in {time.time() - t0:.0f}s", flush=True)
         if cache is not None:
             cache.mkdir(parents=True, exist_ok=True)

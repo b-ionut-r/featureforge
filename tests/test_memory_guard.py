@@ -47,3 +47,20 @@ def test_key_ranges_that_cannot_fit_raise_a_clear_error(monkeypatch):
     monkeypatch.setattr(R, "available_bytes", lambda: 200_000)   # not even a small range fits
     with pytest.raises(MemoryError, match="related table log"):
         R.RelatedTables([ch]).features()
+
+
+def test_related_cut_keeps_what_the_quick_model_uses():
+    from featureforge.pipeline import cut_related, frame_bytes
+    rng = np.random.default_rng(0)
+    n = 4000
+    sig = rng.normal(size=(n, 3)).astype(np.float32)
+    y = (sig.sum(1) + rng.normal(scale=0.3, size=n) > 0).astype(int)
+    a = pd.DataFrame(sig, columns=["s0", "s1", "s2"])
+    b = pd.DataFrame(rng.normal(size=(n, 30)).astype(np.float32), columns=[f"z{i}" for i in range(30)])
+    whole = [a.copy(), b.copy()]
+    assert cut_related(whole, y, n, "binary", 1e12) is whole           # fits: untouched
+    room = 6 * frame_bytes(a[["s0"]])
+    out = cut_related([a.copy(), b.copy()], y, n, "binary", room)
+    kept = [c for F in out for c in F.columns]
+    assert {"s0", "s1", "s2"} <= set(kept) and len(kept) <= 6
+    assert sum(frame_bytes(F) for F in out) <= room
