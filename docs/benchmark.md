@@ -196,6 +196,18 @@ Both scored by the pinned judge in its lean mode (float32 columns, one binned da
 for every arm). Home Credit (2018) rebuilt with the fixes: no guard fires, related columns and held-out loss
 identical (0.231702).
 
+**TalkingData AdTracking** (click fraud, 0.24% positives), 10% of IPs with every click kept: 13.3M training
+clicks (Nov 7-8), 4.3M held out (Nov 9, hours 4-15, the contest's test window), passed unlabeled like the
+contest's test file. Same code as above, no change needed:
+
+| TalkingData, held-out day | AUC | loss | build | peak memory |
+|---|---|---|---|---|
+| raw columns | 0.9621 | 0.007671 | – | – |
+| FeatureForge, round 3 | **0.9685** | **0.006922** (-9.8%) | 17 min (900 s budget) | 8.9 GB |
+
+It keeps two columns: time to the next click of the same ip+channel and of the same ip+channel+os (the winners'
+key feature; it reads the unlabeled clicks, never labels). The search used 860k rows and the gate 2.7M.
+
 ## Corrections and limits
 
 - **diabetes130.** Patients repeat across rows, and both FeatureForge versions counted each patient's visits

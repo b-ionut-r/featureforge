@@ -10,3 +10,5 @@
 {"loss": 0.10876190254273967, "auc": 0.7997001161784956, "case": "hcs", "label": "raw", "n_cols": 222, "build_seconds": 0}
 {"loss": 0.10635553591138452, "auc": 0.8177882350503597, "case": "hcs", "label": "v17", "n_cols": 838, "build_seconds": 3105.94690489769}
 {"loss": 0.23170235862765923, "auc": 0.8026900924533925, "case": "hc", "label": "v17", "n_cols": 1355, "build_seconds": 4560.461189031601}
+{"loss": 0.007670772542295368, "auc": 0.9621083846789572, "case": "td", "label": "raw", "n_cols": 6, "build_seconds": 0}
+{"loss": 0.006922259355929538, "auc": 0.9685157503942328, "case": "td", "label": "v17", "n_cols": 8, "build_seconds": 1003.3149008750916}
