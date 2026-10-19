@@ -92,6 +92,44 @@ def split(case):
         fit.rename(columns={"isFraud": Y}).to_parquet(d / "train.parquet")
         hold.drop(columns=["isFraud"]).to_parquet(d / "test.parquet")
         meta = dict(task="binary", id="TransactionID", tables={})
+    elif case == "ieeefull":
+        # IEEE-CIS, every transaction; the latest 20% by time held out (the contest's test is later months)
+        src = DATA / "ieee"
+        t, i = pd.read_csv(src / "train_transaction.csv"), pd.read_csv(src / "train_identity.csv")
+        i.columns = [c.replace("-", "_") for c in i.columns]
+        df = t.merge(i, on="TransactionID", how="left").sort_values("TransactionDT").reset_index(drop=True)
+        cut = int(0.8 * len(df))
+        fit, hold = df.iloc[:cut], df.iloc[cut:]
+        np.save(d / "y_test.npy", hold.isFraud.to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        fit.rename(columns={"isFraud": Y}).to_parquet(d / "train.parquet")
+        hold.drop(columns=["isFraud"]).to_parquet(d / "test.parquet")
+        meta = dict(task="binary", id="TransactionID", tables={})
+    elif case == "porto":
+        # Porto Seguro, every training row; stratified 80/20 (seed 0), as its test is a random draw
+        df = pd.read_csv(DATA / "porto-seguro-safe-driver-prediction_train.csv.zip")
+        from sklearn.model_selection import train_test_split
+        a, b = train_test_split(np.arange(len(df)), test_size=0.2, random_state=0, stratify=df.target)
+        fit, hold = df.iloc[np.sort(a)], df.iloc[np.sort(b)]
+        np.save(d / "y_test.npy", hold.target.to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        fit.rename(columns={"target": Y}).to_parquet(d / "train.parquet")
+        hold.drop(columns=["target"]).to_parquet(d / "test.parquet")
+        meta = dict(task="binary", id="id", tables={})
+    elif case == "paysim":
+        # PaySim mobile-money fraud (Kaggle ealaxi/paysim1, 6.4M transactions, 0.13% fraud): the latest 20% of
+        # hours held out; step (hour) as a timestamp; the bank's own rule flag dropped
+        src = Path(os.environ.get("PAYSIM_DATA", Path.home() / "data" / "paysim"))
+        df = pd.read_csv(next(src.glob("PS_*.csv"))).drop(columns=["isFlaggedFraud"])
+        df.insert(0, "tx_id", np.arange(len(df)))
+        df["step"] = pd.Timestamp("2017-01-01") + pd.to_timedelta(df.step, unit="h")
+        cut = df.step.quantile(0.8)
+        fit, hold = df[df.step < cut], df[df.step >= cut]
+        np.save(d / "y_test.npy", hold.isFraud.to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        fit.rename(columns={"isFraud": Y}).to_parquet(d / "train.parquet")
+        hold.drop(columns=["isFraud"]).to_parquet(d / "test.parquet")
+        meta = dict(task="binary", id="tx_id", tables={})
     (d / "meta.json").write_text(json.dumps(meta))
 
 
