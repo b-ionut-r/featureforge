@@ -67,6 +67,18 @@ def split(case):
         fit.rename(columns={"target": Y}).to_parquet(d / "train.parquet")
         hold.drop(columns=["target"]).to_parquet(d / "test.parquet")
         meta = dict(task="binary", id="case_id", tables=tables)
+    elif case == "td":
+        # TalkingData: every click of a 10% sample of ips (hash of ip), Nov 7-8 to train on, Nov 9 04:00-15:59 held out
+        df = pd.read_parquet(Path(os.environ.get("TD_DATA", Path.home() / "data" / "talkingdata")) / "td_ip10.parquet")
+        df = df.sort_values("click_time", kind="stable").reset_index(drop=True)
+        df.insert(0, "click_id", np.arange(len(df)))
+        day, hour = df.click_time.dt.day, df.click_time.dt.hour
+        fit, hold = df[day.isin([7, 8])], df[(day == 9) & hour.between(4, 15)]
+        np.save(d / "y_test.npy", hold.is_attributed.to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        fit.rename(columns={"is_attributed": Y}).to_parquet(d / "train.parquet")
+        hold.drop(columns=["is_attributed"]).to_parquet(d / "test.parquet")
+        meta = dict(task="binary", id="click_id", tables={})
     elif case == "ieee":
         src = DATA / "ieee"
         t, i = pd.read_csv(src / "train_transaction.csv"), pd.read_csv(src / "train_identity.csv")
@@ -112,6 +124,10 @@ def judge_cell(case, label):
     for X in (A, B):
         if meta["id"] in X.columns:
             X.drop(columns=[meta["id"]], inplace=True)
+    for X in (A, B):   # timestamps as numbers (as text they would be one category per click)
+        for c in X.columns:
+            if pd.api.types.is_datetime64_any_dtype(X[c]):
+                X[c] = X[c].astype("int64") / 1e9
     if os.environ.get("H2H_JUDGE_F32"):  # big cases: every numeric column as float32, for every arm alike
         for X in (A, B):
             for c in X.columns:
