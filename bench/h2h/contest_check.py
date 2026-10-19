@@ -44,6 +44,29 @@ def split(case):
         fit.rename(columns={"TARGET": Y}).to_parquet(d / "train.parquet")
         pd.concat([hold.drop(columns=["TARGET"]), te_real], ignore_index=True).to_parquet(d / "test.parquet")
         meta = dict(task="binary", id="SK_ID_CURR", tables={n: str(src / f) for n, f in HC_TABLES})
+    elif case == "hcs":
+        src = Path(os.environ.get("HCS_DATA", Path.home() / "data" / "hcs"))
+        rd = lambda *n: pd.concat([pd.read_parquet(src / f"train_{x}.parquet") for x in n], ignore_index=True)
+        base = rd("base").merge(rd("static_0_0", "static_0_1"), on="case_id", how="left")
+        base = base.merge(rd("static_cb_0"), on="case_id", how="left")
+        kids = {"applprev": ("applprev_1_0", "applprev_1_1"), "person": ("person_1",), "cbb": ("credit_bureau_b_1",),
+                "taxa": ("tax_registry_a_1",), "taxb": ("tax_registry_b_1",), "taxc": ("tax_registry_c_1",),
+                "debit": ("debitcard_1",), "deposit": ("deposit_1",), "other": ("other_1",)}
+        tables = {}
+        for name, parts in kids.items():
+            out = src / f"kid_{name}.parquet"
+            if not out.exists():
+                rd(*parts).to_parquet(out)
+            tables[name] = str(out)
+        # the contest's test is later weeks: hold out the latest 20% of weeks
+        cut = np.quantile(base.WEEK_NUM, 0.8)
+        fit, hold = base[base.WEEK_NUM < cut], base[base.WEEK_NUM >= cut]
+        np.save(d / "y_test.npy", hold.target.to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        np.save(d / "week_test.npy", hold.WEEK_NUM.to_numpy())
+        fit.rename(columns={"target": Y}).to_parquet(d / "train.parquet")
+        hold.drop(columns=["target"]).to_parquet(d / "test.parquet")
+        meta = dict(task="binary", id="case_id", tables=tables)
     elif case == "ieee":
         src = DATA / "ieee"
         t, i = pd.read_csv(src / "train_transaction.csv"), pd.read_csv(src / "train_identity.csv")
