@@ -99,7 +99,15 @@ contest tables.
 PFS 1.003 → **0.917**, Rohlik 20.47 → **17.20**, Store Sales 0.481 → **0.413**. On GEFCom the
 forecasting check rejected the block, so the result equals raw.
 
+## Head-to-head with other feature tools
+
+Against Featuretools, OpenFE, AutoFeat and CAAFE-style LLM features on 63 public tables and 20 fresh ones,
+same judge: [benchmark.md](benchmark.md).
+
 ## Known limits
+
+- **A count over a repeating id reads the future** when later rows of the same entity carry the label's
+  event (diabetes130: +24% from a per-patient visit count, +0.4% without the ids).
 
 - **ISIC 2024 and Jane Street scored below raw**, from one sealed run each.
   - On ISIC, a high-cardinality recode of `patient_id` passed the gate on log loss but cut the

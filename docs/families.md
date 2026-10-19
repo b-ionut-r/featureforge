@@ -23,6 +23,8 @@ families are kept only when they pass the gate.
 | JSON cells, list cells | Flattened fields; item counts and common-item flags; per-unit amounts | `blocks/lists.py` | Google Analytics, Two Sigma rentals |
 | Intraday panel (entity × moment × day) | Rank within the moment, imbalances, own last steps of the day | `blocks/panel.py` | Optiver |
 | Date + repeating series key + test after the training period | Horizon-aware lags, rolling windows, seasonal and event features; used alone when the held-out check keeps it | `blocks/forecast.py` | M5 1.862 → 0.852; Favorita 0.757 → 0.563 |
+| Any table without time order | Dense blocks tried whole: every pairwise difference, sum, ratio and product of up to 20 leading numerics; every low-cardinality category's frequency; leading numerics against group means. Kept when the block lowers CV loss | `forge.py` (`_arith_blocks`) | Jungle Chess log loss −36%, Banknote −90% (unseen) |
+| 200-3,000 rows (and up to 10,000 when the 20% gate rejects) | The gate is 5-fold cross-validation of the whole search, every row a gate row | `forge.py` (`_fit_cv_gated`) | Phoneme +3% → +12% |
 | Test holds new entities (patients, users) | The gate, search folds and encodings split whole groups | `forge.py` | — |
 | Test starts after a gap | The gate starts after the same gap; each family must pass on its own | `forge.py` | IEEE-CIS |
 
@@ -38,4 +40,5 @@ These were neutral or worse on outer holdouts, so they are not in the package:
 - past-only, fold-averaged and lagged target encodings;
 - the search on top of forecasting columns;
 - a 300k search-row cap, and a cheaper search model;
+- a cross-validated gate up to 10,000 rows with the search's rounds, and dropping a block on one CV repeat;
 - hour-of-day parts from compact stamps, and counting test rows in label-free counts.
