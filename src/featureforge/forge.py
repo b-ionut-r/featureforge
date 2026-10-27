@@ -778,6 +778,9 @@ class FeatureForge:
         if len(codes) > 3:
             users.append((k, *codes))
         kinds = ("prev", "nth") if self.event_gaps == "past" else ("prev", "next", "nth")
+        # A user that (almost) never repeats has no history: every gap is missing. PaySim's payer x payee
+        # x type is one row each; its 3-key gaps over 6.4M rows took 1.7 GB apiece and nothing else.
+        users = [u for u in users if W.duplicated(list(u)).mean() >= 0.01]
         for u in users:
             for kind in kinds:
                 sp = EntityLag(list(u) if len(u) > 1 else u[0], t, kind)

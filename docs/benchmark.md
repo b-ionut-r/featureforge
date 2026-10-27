@@ -208,6 +208,16 @@ contest's test file. Same code as above, no change needed:
 It keeps two columns: time to the next click of the same ip+channel and of the same ip+channel+os (the winners'
 key feature; it reads the unlabeled clicks, never labels). The search used 860k rows and the gate 2.7M.
 
+**IEEE-CIS, every transaction** (590k rows, latest 20% held out): held-out AUC 0.9215 raw -> **0.9448**
+(loss -21.9%), 74 min, 6.8 GB peak.
+
+**PaySim mobile-money fraud** (Kaggle ealaxi/paysim1, 6.4M transactions, 0.08% fraud, latest 20% of hours held
+out): the round-3 code was killed at 14 GB in two of three runs. Time-gap candidates keyed on payer x payee x
+type, where nearly every key is one row, took 1.7 GB each while priced at 0.4 GB. Users that repeat on under 1%
+of the search rows are no longer offered, and time gaps are priced per key column. It now finishes (52 min,
+11.8 GB): held-out loss 0.00283 -> 0.00006 (AUC 0.99987 -> 0.99999998; raw columns are already near perfect on
+this synthetic table). TalkingData's output is byte-identical with the fix.
+
 ## Corrections and limits
 
 - **diabetes130.** Patients repeat across rows, and both FeatureForge versions counted each patient's visits

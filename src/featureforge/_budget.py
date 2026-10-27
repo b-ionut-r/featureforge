@@ -98,6 +98,10 @@ def _spec_bytes(s, rows: int, wm: int | None = None, text_nnz: dict | None = Non
         # and block measured over 200k and 400k rows of 4 and 6 keys (1 KB a row with 6 keys, priced at 64 bytes).
         k = len(s.parents)
         b += 56 * (k + (k * (k - 1) // 2 if s.pairs else 0)) * rows
+    if type(s).__name__ == "EntityLag":
+        # Each key's codes, the combined key and the sorted positions: 0.51 GB with one key and 1.68 GB with
+        # three over PaySim's 6.4M rows (two killed it at 14 GB, priced at 64 bytes a row).
+        b += 72 * (len(s.parents) - 1) * rows
     if isinstance(s, (LinResid, KNNTarget)):  # (projections are neighbour encoders' kin)
         b += 32 * len(s.parents) * rows
     if isinstance(s, (KNNTarget, KNNClassDist)) and not isinstance(s, Projection):
