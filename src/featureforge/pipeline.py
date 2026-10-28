@@ -189,6 +189,59 @@ def main_time(main: pd.DataFrame, ch: Child, given: str | None) -> str | None:
 CM_CHECK_PARENTS, CM_CHECK_ROWS = 60_000, 300_000
 
 
+def cut_related(A: list, y: np.ndarray, n_train: int, task: Optional[str], room: float) -> list:
+    """The related blocks cut to the columns a quick model uses most, when all of them would not fit in ``room``
+    bytes: a LightGBM fit on up to 100,000 training rows of every block ranks the columns by gain, and the best
+    are kept while they fit. Fewer related columns, never a kill (Home Credit Risk Stability: 1,189 related
+    columns over 1.5M rows, 7.3 GB, killed joining them on the 15 GB bench). A run whose blocks fit never reads
+    this."""
+    import lightgbm as lgb
+    from featureforge._lgb import _lgb_objective
+    need = sum(frame_bytes(F) for F in A)
+    if need <= room:
+        return A
+    rng = np.random.default_rng(0)
+    rows = np.sort(rng.choice(n_train, min(n_train, 100_000), replace=False))
+    names = [c for F in A for c in F.columns]
+    num = {c for F in A for c in F.columns if pd.api.types.is_numeric_dtype(F[c])}
+    M = np.empty((len(rows), len(names)), np.float32)
+    j = 0
+    for F in A:
+        for c in F.columns:
+            M[:, j] = F[c].to_numpy(dtype=np.float32, na_value=np.nan)[rows] if c in num else np.nan
+            j += 1
+    yy = np.asarray(y)[rows]
+    task = task or ("binary" if len(np.unique(yy)) == 2 else "regression")
+    k = int(np.nanmax(yy)) + 1 if task == "multiclass" else 0
+    p = dict(_lgb_objective(task, k), learning_rate=0.1, num_leaves=31, min_child_samples=50, feature_fraction=0.5,
+             verbose=-1, seed=0, deterministic=True, force_col_wise=True)
+    gain = lgb.train(p, lgb.Dataset(M, yy, free_raw_data=True), 200).feature_importance("gain")
+    del M
+    size = {c: frame_bytes(F[[c]]) for F in A for c in F.columns}
+    keep, used = set(), 0.0
+    for i in np.argsort(-gain, kind="stable"):
+        c = names[i]
+        if c not in num:      # (text kept as it was: the search reads it as categories)
+            keep.add(c)
+            used += size[c]
+    for i in np.argsort(-gain, kind="stable"):
+        c = names[i]
+        if c in num and gain[i] > 0 and used + size[c] <= room:
+            keep.add(c)
+            used += size[c]
+    print(f"memory guard: related columns cut to the {len(keep)} of {len(names)} a quick model uses most "
+          f"(whole: {need / 1e9:.1f} GB, room for {room / 1e9:.1f} GB)", flush=True)
+    out = []
+    while A:
+        F = A.pop(0)
+        cols = [c for c in F.columns if c in keep]
+        if cols:
+            out.append(F[cols])
+        del F
+        _trim_heap()
+    return out
+
+
 def join_columns(A: list) -> pd.DataFrame:
     """pd.concat(A, axis=1) of frames on one index, emptying A. When the copy does not fit next to the parts and
     every column is float32, the parts are copied one at a time into one float32 block, each dropped once copied:
@@ -303,6 +356,10 @@ class PipelineConfig:
     history: str = "auto"
     panel: str = "auto"
     lists: str = "auto"
+    proposals: Optional[str] = None
+    llm: str = "auto"
+    description: Optional[str] = None
+    llm_model: Optional[str] = None
 
 
 def _load(src) -> pd.DataFrame:
@@ -332,12 +389,18 @@ def _table_specs(tables) -> List[str]:
     return out
 
 
+def _forecast_room() -> float:
+    """Memory the forecasting block's training rows may take (with their raw columns): under half of what is free."""
+    return 0.45 * available_bytes()
+
+
 def build_features(train, test, target: str, *, id: Optional[str] = None, tables=None, time_col: Optional[str] = None,
                    child_models: bool = True, task: Optional[str] = None, log_target: bool = False,
                    budget: float = 900, top_related: int = 200, out_dir: str = "features",
                    related_cache: Optional[str] = None, forge_kw: Optional[dict] = None, forecast: str = "auto",
                    forecast_kw: Optional[dict] = None, history: str = "auto", panel: str = "auto",
-                   lists: str = "auto") -> Tuple[Path, Path]:
+                   lists: str = "auto", proposals: Optional[str] = None, llm: str = "auto",
+                   description: Optional[str] = None, llm_model: Optional[str] = None) -> Tuple[Path, Path]:
     """Build features for a contest and write them to ``out_dir``.
 
     ``train`` and ``test`` are CSV/parquet paths or DataFrames; ``train`` holds ``target``. ``test`` is the
@@ -347,6 +410,11 @@ def build_features(train, test, target: str, *, id: Optional[str] = None, tables
     ``budget`` is FeatureForge's search budget in seconds of a 4-core reference machine; ``forge_kw`` and
     ``forecast_kw`` pass extra arguments to ``FeatureForge`` and ``ForecastFeatures``. ``forecast``,
     ``history``, ``panel`` and ``lists`` are ``"auto"`` (on from the data's structure) or ``"off"``.
+    ``proposals`` is a Python file of domain features written outside the search (``PROPOSALS = [(label, fn)]``,
+    e.g. by an LLM from the schema); each is kept only if it passes a cross-validated check on top of the
+    search's output (see ``featureforge.proposals``). Without one, ``llm="auto"`` asks Claude to write it from
+    the schema when ``ANTHROPIC_API_KEY`` is set (``"on"`` / ``"off"`` force it; ``description`` is the data's
+    description for the prompt; see ``featureforge.llm``). Without a key the output is unchanged.
 
     Returns the paths of ``train_features.parquet`` (with the target) and ``test_features.parquet``.
     """
@@ -354,7 +422,32 @@ def build_features(train, test, target: str, *, id: Optional[str] = None, tables
                               time=time_col, child_models=child_models, task=task, log_target=log_target,
                               budget=budget, top_related=top_related, out_dir=str(out_dir),
                               related_cache=related_cache, forge_kw=dict(forge_kw or {}), forecast=forecast,
-                              forecast_kw=dict(forecast_kw or {}), history=history, panel=panel, lists=lists))
+                              forecast_kw=dict(forecast_kw or {}), history=history, panel=panel, lists=lists,
+                              proposals=proposals, llm=llm, description=description, llm_model=llm_model))
+
+
+def _add_proposals(cfg, out_tr, y, frames, test_path, holdout=None):
+    """Proposals that pass the check on top of the training output, added to both outputs."""
+    from featureforge import proposals as P
+    from featureforge.utils.task import infer_task
+    task = cfg.task or infer_task(y)
+    yy = np.asarray(y, dtype=float)
+    if task == "regression" and cfg.log_target:
+        yy = np.log1p(np.clip(yy, 0, None))
+    kept = P.gate(out_tr, yy, task, frames, holdout=holdout)
+    if not kept:
+        return out_tr
+    n = len(out_tr)
+    cols = dict(frames)
+    te = pd.read_parquet(test_path)
+    for label, names in kept:
+        v = cols[label]
+        for c in names:
+            out_tr[c] = v[c].iloc[:n].to_numpy()
+            te[c] = v[c].iloc[n:].to_numpy()
+    te.to_parquet(test_path)
+    print(f"proposals kept: {', '.join(l for l, _ in kept)}", flush=True)
+    return out_tr
 
 
 def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
@@ -367,6 +460,26 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
         # Class names (Santander's product codes) become 0..K-1 for the search; written back as given.
         codes, labels = pd.factorize(as_text(y), sort=True)
         y, cfg.task = pd.Series(codes, name=cfg.target), "multiclass"
+    prop_frames = None
+    if not cfg.proposals and cfg.llm != "off":
+        from featureforge import llm as L
+        if L.wanted(cfg.llm):
+            from featureforge.utils.task import infer_task
+            path = Path(cfg.out_dir) / L.FILE_NAME
+            raw = [F.drop(columns=[cfg.id]) if cfg.id and cfg.id in F.columns else F for F in (tr, te)]
+            if path.exists():
+                print(f"llm proposals: reusing {path}", flush=True)
+            else:
+                name = Path(str(cfg.train)).stem if not isinstance(cfg.train, pd.DataFrame) else "data"
+                L.write(*raw, cfg.task or infer_task(y), path, name=name, description=cfg.description,
+                        model=cfg.llm_model)
+            if path.exists():
+                cfg.proposals = str(path)
+    if cfg.proposals:
+        from featureforge import proposals as P
+        raw = [F.drop(columns=[cfg.id]) if cfg.id and cfg.id in F.columns else F for F in (tr, te)]
+        prop_frames = P.compute(P.load(cfg.proposals), *raw)
+        print(f"proposals: {len(prop_frames)} usable from {cfg.proposals}", flush=True)
     ids_tr = tr[cfg.id].to_numpy() if cfg.id else np.arange(len(tr))
     ids_te = te[cfg.id].to_numpy() if cfg.id else np.arange(len(tr), len(tr) + len(te))
     rel_tr = rel_te = None
@@ -422,8 +535,36 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
             # (not for a table read by key range: its rows never sit in memory together)
             cm_tables = [ch for ch in keyed if tr[ch.key].is_unique and ch.source is None]
 
+        # Tables dropped to save memory are written once as they were parsed (categories stay categories) and read
+        # back from that copy: the same frame, read at about twice its size instead of the source's parse (Home
+        # Credit Risk Stability's 6.5M previous applications: 0.8 GB as a frame, 4.2 GB to parse from its parquet,
+        # killed beside 7.3 GB of related columns; 1.7 GB read back from the copy).
+        spill: dict = {}
+        spill_dir = []
+
+        def keep_copy(name, df):
+            # (written a row group at a time: about 0.1 GB more for a 0.8 GB frame)
+            if name in spill or df is None or available_bytes() < 0.5 * frame_bytes(df):
+                return
+            if not spill_dir:
+                import tempfile
+                spill_dir.append(Path(tempfile.mkdtemp(prefix="featureforge_tables_")))
+            path = spill_dir[0] / f"{len(spill)}.parquet"
+            try:
+                df.to_parquet(path)
+                spill[name] = path
+            except Exception:  # noqa: BLE001  (no copy: read from the source again)
+                path.unlink(missing_ok=True)
+
+        def reread(name):
+            if name in spill:
+                df = pd.read_parquet(spill[name])
+                release_arrow()
+                return df
+            return read(src[name])
+
         def table(ch):
-            return Child(ch.name, read(src[ch.name]), key=ch.key, time=ch.time, children=ch.children, drop=ch.drop)
+            return Child(ch.name, reread(ch.name), key=ch.key, time=ch.time, children=ch.children, drop=ch.drop)
         # Keyed tables stay held while memory allows. When the free memory is short of twice the other tables held
         # and four times the table at hand, the others are dropped and each is read again at its own step, for its
         # matches and for its child-row models: the same file gives the same frame (all five of Home Credit's, about
@@ -444,10 +585,13 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
                     one_at_a_time = True
                     for o in keyed:
                         if o.source is None:
+                            keep_copy(o.name, o.df)
                             o.df = None
-                    _trim_heap()
+                            _trim_heap()
                 if ch.df is None:
-                    ch.df = read(src[ch.name])
+                    ch.df = reread(ch.name)
+                    if one_at_a_time:
+                        keep_copy(ch.name, ch.df)
             if ch.source is not None:
                 for j, Fs in enumerate(streamed_features(ch, cfg.history == "auto")):
                     Fs = Fs.reindex(both_main[ch.key].to_numpy()).set_index(both_main.index)
@@ -576,9 +720,15 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
         # of its rows: a concat per side of row slices copied every block twice more, consolidated and joined
         # (Home Credit's 1,200 related columns: the pipeline's peak before the search).
         if A:
+            # (room: 40% of what would be free without them, for the joined block next to its kept parts, then the
+            # search's copies)
+            A = cut_related(A, y.to_numpy(), len(tr), cfg.task,
+                            0.4 * (available_bytes() + sum(frame_bytes(F) for F in A)))
             rel = join_columns(A)
             rel_tr, rel_te = _rows(rel, 0, len(tr)), _rows(rel, len(tr), len(rel))
             del rel
+        if spill_dir:
+            shutil.rmtree(spill_dir[0], ignore_errors=True)
         print(f"related tables: {rel_tr.shape[1]} columns in {time.time() - t0:.0f}s", flush=True)
         if cache is not None:
             cache.mkdir(parents=True, exist_ok=True)
@@ -643,6 +793,30 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
                     return ff.transform(X)
                 names, M = ff.transform_float32(X, _CHECK_CHUNK_ROWS, guard=True)
                 return pd.DataFrame(M, columns=names, index=X.index, copy=False)
+            # A long history (the whole sales file of a large panel) feeds the block in full, but its block for
+            # every training row would not fit: the training rows are cut to the latest periods that do, and the
+            # earlier ones only feed the block (Favorita: 112 days x 210k series, 23.6M rows, skipped the block
+            # whole and fell back to the search).
+            if len(Xtr) > 100_000:
+                names, _ = ff.transform_float32(Xtr.iloc[:2000], _CHECK_CHUNK_ROWS)
+                row = 4.0 * len(names) + Xtr.memory_usage(deep=True).sum() / len(Xtr)
+                room = _forecast_room() - 4.0 * len(names) * len(Xte)
+                fit_rows = int(max(room, 0) / (1.1 * row))
+                if fit_rows < len(Xtr):
+                    pt = ff._periods(Xtr)
+                    order = np.sort(pt[np.isfinite(pt)])[::-1]
+                    cut = order[min(fit_rows, len(order)) - 1] if fit_rows > 0 else np.inf
+                    sel = np.isfinite(pt) & (pt > cut) if (pt >= cut).sum() > fit_rows else np.isfinite(pt) & (pt >= cut)
+                    if sel.sum() >= 0.05 * len(Xtr):
+                        n_p = len(np.unique(pt[sel]))
+                        print(f"forecast: long history: training rows cut to the latest {n_p} periods ({int(sel.sum())} of "
+                              f"{len(Xtr)} rows) to fit memory; earlier periods feed the block only", flush=True)
+                        Xtr = Xtr[sel].reset_index(drop=True)
+                        y = y[sel].reset_index(drop=True)
+                        ids_tr = ids_tr[sel]
+                        if rel_tr is not None:
+                            rel_tr = rel_tr[sel].reset_index(drop=True)
+                        release_arrow()
             try:
                 Ftr = block(Xtr)
                 Fte = block(Xte)
@@ -773,12 +947,18 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
     out_te.to_parquet(out / "test_features.parquet")
     del out_te, Xte
     release_arrow()
+    holdout = None
     if not forecasting:
         out_tr = forge.transform_train(Xtr, release=True)
+        holdout = getattr(forge, "holdout_", None)
         del forge
     related(out_tr, "train.parquet")
     if spill is not None:
         shutil.rmtree(spill, ignore_errors=True)
+    if prop_frames and forecasting:
+        print("proposals: skipped (the forecasting block has no held-out window to judge them on)", flush=True)
+    elif prop_frames:
+        out_tr = _add_proposals(cfg, out_tr, y, prop_frames, out / "test_features.parquet", holdout)
     out_tr[cfg.target] = labels[y.to_numpy()] if labels is not None else y.to_numpy()
     if cfg.id:
         out_tr.insert(0, cfg.id, ids_tr)

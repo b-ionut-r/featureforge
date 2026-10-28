@@ -188,6 +188,9 @@ class FeatureForge:
         self.log_target = log_target
         self.time_budget = time_budget
         self.n_rounds = n_rounds
+        self.block_numeric = 20
+        self.cv_gate = True
+        self.cv_gate_rows = 3000
         self.max_new_features = max_new_features
         self.top_numeric = top_numeric
         self.top_keys = top_keys
@@ -240,6 +243,10 @@ class FeatureForge:
 
     def _threads(self) -> int:
         import os
+        if getattr(self, "_cells", 1e9) <= 200_000:
+            # A small table's fits take milliseconds; several threads only wait on each other, and on a busy
+            # machine they waited seconds (Balance Scale, 500 rows: 57 s on four threads, 6 s on one).
+            return 1
         return os.cpu_count() if self.n_jobs in (-1, None) else max(1, self.n_jobs)
 
     def _folds(self, n_rows, y, k, seed):
@@ -771,6 +778,9 @@ class FeatureForge:
         if len(codes) > 3:
             users.append((k, *codes))
         kinds = ("prev", "nth") if self.event_gaps == "past" else ("prev", "next", "nth")
+        # A user that (almost) never repeats has no history: every gap is missing. PaySim's payer x payee
+        # x type is one row each; its 3-key gaps over 6.4M rows took 1.7 GB apiece and nothing else.
+        users = [u for u in users if W.duplicated(list(u)).mean() >= 0.01]
         for u in users:
             for kind in kinds:
                 sp = EntityLag(list(u) if len(u) > 1 else u[0], t, kind)
@@ -1300,7 +1310,106 @@ class FeatureForge:
         contest trick. Target statistics only ever use labeled rows.
         """
         with _one_blas_thread():
-            return self._fit(X, y, X_unlabeled)
+            # Below 200 rows the 20% gate is not held out at all (too few rows), so the search's picks went in
+            # unjudged (Sonar, 166 rows: held-out log loss +32%); the cross-validated gate judges them there too.
+            if self.cv_gate and self.gate_frac and 60 <= len(X) <= self.cv_gate_rows:
+                done = self._fit_cv_gated(X, y, X_unlabeled)
+                if done is not None:
+                    return done
+            self._fit(X, y, X_unlabeled)
+            # Up to 10,000 rows the 20% gate holds 600-2,000 rows and needs z >= 1.65 below 1,000; when it turns
+            # the search down, the blocks alone get the cross-validated gate, where every row is a gate row
+            # (Phoneme: gate z=+1.60 for the blocks the other tools gained 10-12% with).
+            if (self.cv_gate and self.gate_frac and self.cv_gate_rows < len(X) <= 10_000 and not self.gate_passed_
+                    and self.time_col_ is None and self.group_col_ is None):
+                keep = dict(self.__dict__)
+                if self._fit_cv_gated(X, y, X_unlabeled, second=True) is None:
+                    self.__dict__.clear()
+                    self.__dict__.update(keep)
+            return self
+
+    def _params(self):
+        import inspect
+        return {k: getattr(self, k) for k in inspect.signature(type(self).__init__).parameters if k != "self"}
+
+    def _fit_cv_gated(self, X, y, X_unlabeled, second=False):
+        """Small tables: the gate as 5-fold cross-validation of the whole search.
+
+        A 20% gate on a few hundred rows cannot tell a real gain from noise (breast cancer, 559 rows:
+        gate loss 0.120 -> 0.100 at z=+0.44 against the 1.645 required). Here each fold runs the search
+        on the other four folds (no gate of its own) and scores raw columns against its features on the
+        fold's rows, so every row is a gate row and the gain is judged on the procedure, not on features
+        the search already saw. When the pooled paired gain clears the gate's z, the features of a search
+        on all rows are kept. Otherwise this returns None and the usual search and gate run. Tables with a
+        time or group structure (found by the first fold's search) take the usual path too."""
+        from featureforge.utils.task import infer_task
+        self._t0 = time.time()
+        self._cells = X.shape[0] * X.shape[1]
+        n = len(X)
+        Xr = _renumbered(self._named(X))
+        y_arr = np.asarray(y)
+        task = self.task or infer_task(pd.Series(y_arr))
+        K = 5
+        if task == "regression":
+            folds = list(KFold(K, shuffle=True, random_state=self.random_state + 7).split(np.zeros(n)))
+        else:
+            folds = list(StratifiedKFold(K, shuffle=True, random_state=self.random_state + 7).split(np.zeros(n), y_arr))
+        # The search's rounds are left out here: on a few hundred rows their picks overfit the search's own CV
+        # (German credit, Pima diabetes: held out worse on every one of five splits, z -3 to -5); the blocks,
+        # a handful of fixed-width CV fits, are what carries over (Balance Scale, Tic-Tac-Toe, vehicles).
+        base = {**self._params(), "gate_frac": 0.0, "time_budget": self.time_budget / (K + 1),
+                "verbose": False, "n_rounds": 0}
+        d = np.zeros(n)
+        t0 = time.time()
+        for i, (tr, va) in enumerate(folds):
+            sub = FeatureForge(**base)
+            sub.cv_gate, sub.block_numeric = False, self.block_numeric
+            Xtr, Xva = Xr.iloc[tr].reset_index(drop=True), Xr.iloc[va].reset_index(drop=True)
+            U = Xva if X_unlabeled is None else pd.concat([Xva, self._named(X_unlabeled)], ignore_index=True)
+            sub._fit(Xtr, y_arr[tr], U)
+            if sub.time_col_ is not None or sub.group_col_ is not None:
+                self._log("cross-validated gate: time or group structure found -> usual gate")
+                return None
+            if not sub.new_columns_ and not sub.recode_:
+                continue
+            yt = y_arr.astype(float)
+            if task == "regression" and self.log_target:
+                yt = np.log1p(np.clip(yt, 0, None))
+            raw = _holdout_rows(task, Xtr, yt[tr], Xva, yt[va], self.random_state, self._threads())
+            fe = _holdout_rows(task, sub.transform_train(Xtr), yt[tr], sub.transform(Xva), yt[va],
+                               self.random_state, self._threads())
+            d[va] = raw - fe
+            self._log(f"cross-validated gate fold {i + 1}: {len(sub.new_columns_)} features, held-out loss "
+                      f"{raw.mean():.6f} -> {fe.mean():.6f}")
+        dw = _winsor(d, None if task == "regression" else y_arr)
+        z = float(dw.mean() / (dw.std(ddof=1) / np.sqrt(n) + 1e-300)) if dw.std() > 0 else 0.0
+        # Every row is a gate row here, so the usual gate's z applies: its stricter small-gate rule was for a fifth
+        # of the rows standing in for all of them.
+        z_needed = self.gate_z
+        ok = d.mean() > 0 and z >= z_needed
+        self._log(f"cross-validated gate over {n} rows: mean gain {d.mean():+.6f} (z={z:+.2f}, need {z_needed:.2f}) "
+                  f"-> {'PASS' if ok else 'usual gate'} ({time.time() - t0:.0f}s)")
+        if not ok and second:
+            return None
+        if not ok:
+            # The whole procedure was judged on every row and did not beat the raw columns: the usual
+            # 20% gate, with a fifth of the rows, is not asked again (breast cancer: its gate passed
+            # features on two of five splits and both lost held out, 0.061 -> 0.089 and 0.163 -> 0.205).
+            self._gate_veto = True
+            try:
+                return self._fit(X, y, X_unlabeled)
+            finally:
+                self._gate_veto = False
+        final = FeatureForge(**{**base, "verbose": self.verbose})
+        final.block_numeric = self.block_numeric
+        final._fit(X, y, X_unlabeled)
+        params = self._params()
+        self.__dict__.update(final.__dict__)
+        self.__dict__.update(params)
+        self.cv_gate = True
+        self.gate_passed_ = True
+        self.cv_gate_z_ = z
+        return self
 
     def _fit(self, X: pd.DataFrame, y, X_unlabeled: Optional[pd.DataFrame] = None):
         self._t0 = time.time()
@@ -1310,6 +1419,7 @@ class FeatureForge:
         # Column names as unique strings (integer names broke sorting, a repeated name made pandas return a frame
         # where a column was expected); transform renames new rows' columns the same way.
         X = _renumbered(self._named(X))
+        self._cells = X.shape[0] * X.shape[1]
         if X_unlabeled is not None:
             X_unlabeled = self._named(X_unlabeled)
         # The caller's frames, which stay in memory through the fit (see _mem_rows).
@@ -1493,6 +1603,16 @@ class FeatureForge:
         else:
             idx_sel, idx_gate = idx, np.array([], dtype=int)
 
+        # Time-ordered or new-group tests: outside proposals are judged on this same split, not on
+        # random folds (IEEE-CIS: proposals that cleared random folds at z=+3.4 lost held out).
+        self.holdout_ = None
+        if len(idx_gate) and (self.time_col_ is not None or self.group_col_ is not None):
+            hs, hg = np.asarray(idx_sel), np.asarray(idx_gate)
+            if self.time_col_ is not None:
+                tt = X[self.time_col_].to_numpy(dtype=float)
+                hs, hg = hs[np.argsort(tt[hs], kind="stable")], hg[np.argsort(tt[hg], kind="stable")]
+            self.holdout_ = (hs, hg)
+
         # Large tables: the search runs on the latest rows (time-ordered data), whole random
         # groups (new-entity tests) or a random sample, so that its CV fits leave room in the
         # budget for several rounds; the rows left out still feed label-free statistics.
@@ -1631,7 +1751,7 @@ class FeatureForge:
         self._log(f"task={self.task_} rows={n} (search {len(W)}, gate {len(idx_gate)}) "
                   f"cols={X.shape[1]} base CV loss={cur_loss:.6f} (one CV fit {self._cv_s:.0f}s of work)")
 
-        for r in range(self.n_rounds):
+        for r in range(0 if getattr(self, "_gate_veto", False) else self.n_rounds):
             if len(selected) >= self.max_new_features:
                 break
             # Memory guard: the least a round needs (the fewest search rows the guard ever leaves, 200 a CV fold,
@@ -1821,6 +1941,7 @@ class FeatureForge:
                 self._log(f"  round {r + 1} picks: {', '.join(sp.name for sp in chosen)[:600]}")
             cur_loss = best_loss
 
+        cur_loss = self._arith_blocks(W, yW, folds, imp, selected, cur_loss)
         self._deadline = None
         self.search_cv_loss_ = cur_loss
         last_r = max((sp.round_ for sp in selected), default=None)
@@ -1874,6 +1995,12 @@ class FeatureForge:
                 self.raw_cols_ = [c for c in self.raw_cols_ if c not in dropped]
                 self.anchors_ = []
 
+        if getattr(self, "_gate_veto", False):
+            self._log("cross-validated gate rejected the search -> raw columns kept")
+            self.gate_passed_, self.selected_, self.recode_, self.addons_ = False, [], False, {}
+            dropped = {a[3] for a in self.anchors_}
+            self.raw_cols_ = [c for c in self.raw_cols_ if c not in dropped]
+            self.anchors_ = []
         # Refit every spec's statistics on all training rows.
         self.U_search_ = self.WU_ = self._wu_src = None
         self._fit_full(X, y_np, None if X_unlabeled is None else self._prep(X_unlabeled))
@@ -2161,6 +2288,75 @@ class FeatureForge:
             best_set, best_l = self._gate_families(gate_loss, raw_rows, z_needed, best_set, best_l,
                                                    budgeted=full_ok)
         return best_set, raw_l, best_l
+
+    def _arith_blocks(self, W, yW, folds, imp, selected, cur_loss):
+        """Dense arithmetic blocks: one operation over every pair of the leading numeric columns,
+        tried as a whole. The residual screen scores one candidate at a time, so it misses
+        features whose worth is in helping the trees split (Jungle Chess: piece-file and rank
+        differences, held out 0.264 -> 0.176 log loss with all pairwise differences, while every
+        single difference screened below its parents). Blocks are added greedily while each one
+        lowers the CV loss by ``min_rel_gain``; the gate then judges them as one more round."""
+        if self.time_col_ is not None or getattr(self, "_gate_veto", False):
+            return cur_loss
+        num_cols = [c for c in self.raw_cols_ if c in W.columns and c not in self.cat_cols_]
+        lead = [c for c in imp.sort_values(ascending=False).index if c in num_cols]
+        # As many leading numerics as keep a block's matrix near 20 million cells (80 MB of float32): every
+        # pair among 18 vehicle-shape measures carried over (held out -24% log loss) where the leading 8 lost.
+        m = self.block_numeric
+        while m > 3 and m * (m - 1) / 2 * len(W) > 2e7:
+            m -= 1
+        lead = [c for c in lead if W[c].nunique() > 2][:m]
+        have = {sp.name for sp in selected}
+        blocks = []
+        if len(lead) >= 3:
+            for op in ("sub", "add", "div", "mul"):
+                specs = [sp for sp in (Arith(op, a, b) for a, b in combinations(lead, 2)) if sp.name not in have]
+                if specs:
+                    blocks.append((op, specs))
+        # Every low-cardinality categorical as its frequency: a number the trees split freely, where
+        # LightGBM's categorical splits need min_data_per_group rows a level (Tic-Tac-Toe's nine squares,
+        # 766 rows: held-out log loss -40% with the counts).
+        low = [c for c in self.raw_cols_ if c in self.cat_cols_ and c in W.columns and c not in self.hc_cols_]
+        counts = [sp for sp in (Count([c]) for c in low) if sp.name not in have]
+        if len(counts) >= 2:
+            blocks.append(("count", counts))
+        # Each leading numeric against the mean of its group, for the leading low-cardinality keys
+        # (Deep Feature Synthesis's per-category aggregates, which Featuretools won small tables with).
+        keys = [c for c in imp.sort_values(ascending=False).index
+                if c in low or (c in num_cols and 3 <= W[c].nunique() <= 32)][:4]
+        vals_ = [c for c in lead if W[c].nunique() > 10][:6]
+        groups = [sp for sp in (GroupStat(k, v, st) for k in keys for v in vals_ if v != k for st in ("mean", "dev"))
+                  if sp.name not in have]
+        if groups:
+            blocks.append(("group", groups))
+        if not blocks:
+            return cur_loss
+        r_next = max((sp.round_ for sp in selected), default=-1) + 1
+        cols = list(W.columns)
+        F = W
+        best = cur_loss
+        for op, specs in blocks:
+            width = len(cols) + len(specs)
+            if self._time_left() < self._cv_s * width / max(self._cv_w, 1):
+                self._log(f"arithmetic blocks: budget left too small for the {op} block; stopping")
+                break
+            self._set_wu(F)
+            src = F if self.WU_ is None else self.WU_  # label-free: over every row whose features are known
+            vals = {sp.name: sp.fit(src, None, self.ctx_).transform(F, self.ctx_) for sp in specs}
+            self._set_wu(F, on=False)
+            G = F.assign(**vals)
+            M = (*self._lgb_matrix(self._model_frame(G)), list(G.columns))
+            _, loss, _ = self._cv(None, yW, folds, mat=M)
+            self._log(f"block {op} ({len(specs)} columns): CV loss "
+                      f"{best:.6f} -> {loss:.6f} ({100 * (best - loss) / best:+.2f}%)")
+            if (best - loss) / best >= self.min_rel_gain:
+                for sp in specs:
+                    sp.round_ = r_next
+                    W[sp.name] = vals[sp.name]
+                selected.extend(specs)
+                F, cols, best = W, list(W.columns), loss
+                r_next += 1
+        return best
 
     def _sparse_te(self, X) -> bool:
         """A selected target statistic keyed on a thin key (under 20 rows a level). Its
@@ -2770,3 +2966,27 @@ class FeatureForge:
 
     def report(self) -> pd.DataFrame:
         return pd.DataFrame(self.history_)
+
+
+def _holdout_rows(task, Ftr, ytr, Fva, yva, seed, threads, rounds=3000):
+    """Per-row loss on ``Fva`` of a LightGBM fitted on ``Ftr`` (early-stopped on a fifth of it, then refitted)."""
+    import lightgbm as lgb
+    Ftr, Fva = Ftr.copy(), Fva.copy()
+    for c in Ftr.columns:
+        if not pd.api.types.is_numeric_dtype(Ftr[c]) or pd.api.types.is_bool_dtype(Ftr[c]):
+            a, b = (v.astype("string").fillna("__na__").astype(object) for v in (Ftr[c], Fva[c]))
+            levels = pd.Index(pd.unique(a))
+            Ftr[c], Fva[c] = pd.Categorical(a, categories=levels), pd.Categorical(b, categories=levels)
+    Ftr.columns = Fva.columns = [f"f{i}" for i in range(Ftr.shape[1])]
+    k = int(max(ytr.max(), yva.max())) + 1 if task == "multiclass" else 0
+    P = dict(objective={"binary": "binary", "multiclass": "multiclass", "regression": "regression"}[task],
+             learning_rate=0.05, num_leaves=31, min_child_samples=20, feature_fraction=0.7, bagging_fraction=0.8,
+             bagging_freq=1, lambda_l2=1.0, num_threads=threads, verbose=-1, seed=seed, max_cat_to_onehot=8,
+             cat_smooth=20, **({"num_class": k} if k else {}))
+    perm = np.random.default_rng(seed).permutation(len(Ftr))
+    cut = int(0.8 * len(Ftr))
+    a, b = np.sort(perm[:cut]), np.sort(perm[cut:])
+    m = lgb.train(P, lgb.Dataset(Ftr.iloc[a], ytr[a]), rounds, valid_sets=[lgb.Dataset(Ftr.iloc[b], ytr[b])],
+                  callbacks=[lgb.early_stopping(100, verbose=False)])
+    full = lgb.train(P, lgb.Dataset(Ftr, ytr), max(1, int(m.best_iteration * 1.1)))
+    return _row_loss(task, yva, full.predict(Fva, raw_score=True))

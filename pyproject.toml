@@ -23,6 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 chem = ["rdkit"]
+llm = ["anthropic>=1.0"]
 dev = ["pytest>=8", "pyflakes"]
 
 [project.scripts]
