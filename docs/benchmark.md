@@ -238,6 +238,22 @@ locally because the training file records them only on days with sales):
 On Kaggle, the forecasting block with promotions, 112 days of history and 49 training days scored private
 0.52303 (public 0.53362), against 0.56256 (public 0.53248) for the earlier entry.
 
+M5 Accuracy, unseen for this change (bench/fc/m5_pipe.py: build_features, one Tweedie LightGBM, M5's WRMSSE).
+Kaggle private scores the evaluation month; the validation month (last 28 training days held out) is a
+second, local check.
+
+| M5 setup | Kaggle private | validation month | build |
+|---|---|---|---|
+| 450 days, code before the change (block skipped for memory, search runs) | 1.2559 | | 76 min |
+| 450 days, block kept, training rows cut to the latest 237 days | 0.7180 | **0.6798** | 34 min |
+| same features, latest 120 training days | 0.7031 | 0.6901 | 34 min |
+| 120 days of history (block fits, no cut) | **0.6503** | 0.7042 | 10 min |
+
+The change takes the long-history build from 1.256 to 0.718. Whether the longer history itself helps is
+split: it adds last-year columns, which win the validation month and lose the evaluation month, so the
+history length stays the user's choice. The earlier M5 entry (private 0.8524) used a squared-error judge on
+log sales; its gap to 0.6503 comes from the judge, not from the features.
+
 ## Corrections and limits
 
 - **diabetes130.** Patients repeat across rows, and both FeatureForge versions counted each patient's visits
