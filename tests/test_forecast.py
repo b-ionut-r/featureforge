@@ -94,3 +94,24 @@ def test_monthly_periods_and_no_own_or_later_labels():
         y2[p >= p[i]] = y2[p >= p[i]] * 5 + 100
         F2 = ForecastFeatures(verbose=False, log_target=False).fit(X, y2, U).transform(X.iloc[[i]])
         assert np.allclose(np.nan_to_num(F.iloc[[i]].to_numpy(), nan=-1), np.nan_to_num(F2.to_numpy(), nan=-1), rtol=1e-5)
+
+
+def test_long_history_cut_to_latest_periods_that_fit(tmp_path, monkeypatch):
+    """When the block for every training row would not fit, the training rows are the latest periods that do;
+    the earlier ones still feed the block, so the test rows' features are the same as with room for all."""
+    from featureforge import pipeline
+    from featureforge.pipeline import build_features
+    X, y, U = _panel(n_ent=300, days=400, test_days=28)
+    tr = X.assign(sales=np.asarray(y), id=-np.arange(1, len(X) + 1))
+    te = U.assign(id=np.arange(len(U)))
+    a = build_features(tr, te, "sales", id="id", out_dir=str(tmp_path / "a"), budget=30)
+    monkeypatch.setattr(pipeline, "_forecast_room", lambda: 40_000 * 400.0)
+    b = build_features(tr, te, "sales", id="id", out_dir=str(tmp_path / "b"), budget=30)
+    A, B = pd.read_parquet(a[0]), pd.read_parquet(b[0])
+    assert len(A) == len(tr) and 0.05 * len(tr) < len(B) < len(tr)
+    # whole periods, the latest ones
+    da, db = pd.to_datetime(A.date.astype(str)), pd.to_datetime(B.date.astype(str))
+    assert db.min() > da.min() and db.max() == da.max() and (da >= db.min()).sum() == len(B)
+    assert set(B.id) <= set(A.id)
+    pd.testing.assert_frame_equal(A.set_index("id").loc[B.id].reset_index(), B, check_like=True)
+    pd.testing.assert_frame_equal(pd.read_parquet(a[1]), pd.read_parquet(b[1]))

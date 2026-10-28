@@ -389,6 +389,11 @@ def _table_specs(tables) -> List[str]:
     return out
 
 
+def _forecast_room() -> float:
+    """Memory the forecasting block's training rows may take (with their raw columns): under half of what is free."""
+    return 0.45 * available_bytes()
+
+
 def build_features(train, test, target: str, *, id: Optional[str] = None, tables=None, time_col: Optional[str] = None,
                    child_models: bool = True, task: Optional[str] = None, log_target: bool = False,
                    budget: float = 900, top_related: int = 200, out_dir: str = "features",
@@ -788,6 +793,30 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
                     return ff.transform(X)
                 names, M = ff.transform_float32(X, _CHECK_CHUNK_ROWS, guard=True)
                 return pd.DataFrame(M, columns=names, index=X.index, copy=False)
+            # A long history (the whole sales file of a large panel) feeds the block in full, but its block for
+            # every training row would not fit: the training rows are cut to the latest periods that do, and the
+            # earlier ones only feed the block (Favorita: 112 days x 210k series, 23.6M rows, skipped the block
+            # whole and fell back to the search).
+            if len(Xtr) > 100_000:
+                names, _ = ff.transform_float32(Xtr.iloc[:2000], _CHECK_CHUNK_ROWS)
+                row = 4.0 * len(names) + Xtr.memory_usage(deep=True).sum() / len(Xtr)
+                room = _forecast_room() - 4.0 * len(names) * len(Xte)
+                fit_rows = int(max(room, 0) / (1.1 * row))
+                if fit_rows < len(Xtr):
+                    pt = ff._periods(Xtr)
+                    order = np.sort(pt[np.isfinite(pt)])[::-1]
+                    cut = order[min(fit_rows, len(order)) - 1] if fit_rows > 0 else np.inf
+                    sel = np.isfinite(pt) & (pt > cut) if (pt >= cut).sum() > fit_rows else np.isfinite(pt) & (pt >= cut)
+                    if sel.sum() >= 0.05 * len(Xtr):
+                        n_p = len(np.unique(pt[sel]))
+                        print(f"forecast: long history: training rows cut to the latest {n_p} periods ({int(sel.sum())} of "
+                              f"{len(Xtr)} rows) to fit memory; earlier periods feed the block only", flush=True)
+                        Xtr = Xtr[sel].reset_index(drop=True)
+                        y = y[sel].reset_index(drop=True)
+                        ids_tr = ids_tr[sel]
+                        if rel_tr is not None:
+                            rel_tr = rel_tr[sel].reset_index(drop=True)
+                        release_arrow()
             try:
                 Ftr = block(Xtr)
                 Fte = block(Xte)

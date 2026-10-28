@@ -1,0 +1,6 @@
+{"label": "h56r14", "nwrmsle": 0.5309493605132155, "iters": 1146, "judge_s": 876, "seconds": 234, "cols": 63, "train_rows": 2949156}
+{"label": "n56r14", "nwrmsle": 0.5564500491372775, "iters": 1498, "judge_s": 1053, "seconds": 201, "cols": 60, "train_rows": 2949156}
+{"label": "n182r14", "nwrmsle": 0.5547335047081435, "iters": 1852, "judge_s": 1353, "seconds": 590, "cols": 60, "train_rows": 2949156}
+{"label": "n112r56", "nwrmsle": 0.5477932160966799, "iters": 1999, "judge_s": 3630, "seconds": 412, "cols": 60, "train_rows": 11796624}
+{"label": "n56r14", "nwrmsle": 0.556921147241962, "iters": 1498, "judge_s": 1266, "seconds": 201, "cols": 60, "train_rows": 2949156}
+{"label": "pipe112b", "nwrmsle": 0.5481516297124494, "iters": 1998, "judge_s": 4859, "seconds": 1974, "cols": 60, "train_rows": 12639240}

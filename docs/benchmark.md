@@ -218,6 +218,26 @@ of the search rows are no longer offered, and time gaps are priced per key colum
 11.8 GB): held-out loss 0.00283 -> 0.00006 (AUC 0.99987 -> 0.99999998; raw columns are already near perfect on
 this synthetic table). TalkingData's output is byte-identical with the fix.
 
+## Round 4: long forecasting histories
+
+A forecasting table passed with its whole recent history (Favorita: 112 days x 210,654 store x item series,
+23.6M rows) had the forecasting block dropped by the memory guard that joins it to every training row, and the
+generic search ran instead. The block is now kept: the training rows are cut to the latest periods whose block
+fits in memory (here 60 days, 12.6M rows), and the earlier periods still feed it. Tables whose block fits are
+unchanged.
+
+Favorita, last 16 training days held out (bench/fc/fav_bench.py, one LightGBM, NWRMSLE; promotions left out
+locally because the training file records them only on days with sales):
+
+| Favorita setup | held-out NWRMSLE | build |
+|---|---|---|
+| 56 days of history, 14 training days (as the earlier entry) | 0.5569 | 3 min |
+| 182 days of history, 14 training days | 0.5547 | 10 min |
+| build_features on 112 days (block kept, 60 training days) | **0.5482** | 33 min |
+
+On Kaggle, the forecasting block with promotions, 112 days of history and 49 training days scored private
+0.52303 (public 0.53362), against 0.56256 (public 0.53248) for the earlier entry.
+
 ## Corrections and limits
 
 - **diabetes130.** Patients repeat across rows, and both FeatureForge versions counted each patient's visits
