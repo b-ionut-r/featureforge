@@ -332,6 +332,78 @@ class RelatedTables:
         return out
 
 
+def _is_code(s: pd.Series) -> bool:
+    """A numeric column of a related table that names things (a product's barcode, a fineline number) rather than
+    measures them: whole numbers, at least 100 distinct within the middle 99% of values, spread over a range at
+    least 1.5 times as wide as their count, and few of them round (multiples of 10). Day counts fill their range
+    densely; amounts are fractional or round; values on over 1% of rows (a 0, Home Credit's 365243 "never") are
+    left out of the range."""
+    if not pd.api.types.is_numeric_dtype(s) or pd.api.types.is_bool_dtype(s):
+        return False
+    v = s.dropna()
+    if len(v) == 0:
+        return False
+    v = v.sample(min(len(v), 200_000), random_state=0).to_numpy(dtype=float)
+    if np.any(v != np.round(v)):
+        return False
+    vals, cnt = np.unique(v, return_counts=True)
+    v = v[~np.isin(v, vals[cnt > 0.01 * len(v)])]   # placeholders and pile-ups (a 0, a 365243 "never")
+    if len(v) == 0:
+        return False
+    lo, hi = np.quantile(v, [0.005, 0.995])
+    u = np.unique(v[(v >= lo) & (v <= hi)])
+    return len(u) >= 100 and (hi - lo + 1) >= 1.5 * len(u) and np.mean(u % 10 == 0) < 0.3
+
+
+def bag_features(ch: Child, k: int = 16, top_levels: int = 8, max_cols: int = 4) -> pd.DataFrame:
+    """Each parent's bag of a related table's codes, compressed: the parent x level count matrix of a categorical
+    with more levels than the aggregates keep one column for (Walmart's 68 departments: 8 kept) or of a code
+    column (barcodes, fineline numbers, which the aggregates otherwise average as if they were amounts), TF-IDF
+    weighted and reduced to ``k`` latent components; what a basket holds, as the winners of shopping contests
+    pivoted it. Label-free; fitted over every parent's rows."""
+    from scipy import sparse
+    from sklearn.decomposition import TruncatedSVD
+    from sklearn.feature_extraction.text import TfidfTransformer
+    df, key = ch.df, ch.key
+    ids = {key, *ch.drop} | {g.key for g in ch.children}
+    picks = []
+    for c in df.columns:
+        if c in ids or c == ch.time:
+            continue
+        s = df[c]
+        cat = s.dtype == object or isinstance(s.dtype, pd.CategoricalDtype) or pd.api.types.is_string_dtype(s)
+        if cat:
+            nu = s.nunique()
+            if nu > top_levels:
+                picks.append((nu, c))
+        elif _is_code(s):
+            picks.append((s.nunique(), c))
+    # Only codes that recur across parents (a barcode many baskets hold): a level each parent has alone (another
+    # table's row id) says nothing a model could carry to a new parent.
+    picks = [(nu, c) for nu, c in picks if df[[key, c]].drop_duplicates()[c].value_counts().median() >= 2]
+    picks = sorted(picks, reverse=True)[:max_cols]
+    if not picks:
+        return pd.DataFrame(index=pd.Index([], name=key))
+    rows, keys = pd.factorize(df[key])
+    ok = rows >= 0
+    out = []
+    for nu, c in picks:
+        lv = pd.factorize(df[c].astype(str) if not pd.api.types.is_numeric_dtype(df[c]) else df[c])[0]
+        m = ok & (lv >= 0)
+        M = sparse.csr_matrix((np.ones(int(m.sum()), dtype=np.float32), (rows[m], lv[m])),
+                              shape=(len(keys), int(lv.max()) + 1))
+        M.sum_duplicates()
+        kk = min(k, M.shape[1] - 1)
+        if kk < 1:
+            continue
+        T = TfidfTransformer(sublinear_tf=True).fit_transform(M)
+        Z = TruncatedSVD(kk, algorithm="randomized", n_iter=5, random_state=0).fit_transform(T).astype(np.float32)
+        out.append(pd.DataFrame(Z, index=keys, columns=[_safe(f"{ch.name}:{c}_bag{j}") for j in range(kk)]))
+    if not out:
+        return pd.DataFrame(index=pd.Index([], name=key))
+    return pd.concat(out, axis=1)
+
+
 def child_model_features(ch: Child, y_by_key: pd.Series, test_keys: Sequence, n_folds: int = 5,
                          seed: int = 0, max_rows: int = 3_000_000, rounds: int = 300,
                          task: str = "binary") -> pd.DataFrame:

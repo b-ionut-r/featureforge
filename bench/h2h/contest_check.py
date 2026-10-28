@@ -130,6 +130,64 @@ def split(case):
         fit.rename(columns={"isFraud": Y}).to_parquet(d / "train.parquet")
         hold.drop(columns=["isFraud"]).to_parquet(d / "test.parquet")
         meta = dict(task="binary", id="tx_id", tables={})
+    elif case in ("homesite", "walmart", "optiver", "enefit"):
+        # Paid contests never run before (Kaggle dataset mirrors under FRESH_C), each split like its test.
+        src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c"))
+        if case == "homesite":
+            # Homesite Quote Conversion: stratified 80/20; unlabeled = held-out rows + the real test file.
+            tr = pd.read_csv(src / "homesite-quote-conversion" / "train.csv")
+            te_real = pd.read_csv(src / "homesite-quote-conversion" / "test.csv")
+            from sklearn.model_selection import train_test_split
+            a, b = train_test_split(np.arange(len(tr)), test_size=0.2, random_state=0, stratify=tr.QuoteConversion_Flag)
+            fit, hold = tr.iloc[np.sort(a)], tr.iloc[np.sort(b)]
+            np.save(d / "y_test.npy", hold.QuoteConversion_Flag.to_numpy())
+            np.save(d / "n_hold.npy", np.array([len(hold)]))
+            fit.rename(columns={"QuoteConversion_Flag": Y}).to_parquet(d / "train.parquet")
+            pd.concat([hold.drop(columns=["QuoteConversion_Flag"]), te_real], ignore_index=True).to_parquet(d / "test.parquet")
+            meta = dict(task="binary", id="QuoteNumber", tables={})
+        elif case == "walmart":
+            # Walmart Trip Type: one row per visit (weekday, trip type) and its scanned items as a related table;
+            # 20% of visits held out (seed 0), the real test visits unlabeled too.
+            w = src / "walmart-trip-type-classification"
+            it_tr, it_te = pd.read_csv(w / "walmart_train.csv"), pd.read_csv(w / "walmart_test.csv")
+            it_te["VisitNumber"] += 10_000_000  # the test file numbers its visits from 1 again
+            vis = it_tr.groupby("VisitNumber", as_index=False).agg(Weekday=("Weekday", "first"), TripType=("TripType", "first"))
+            vis["TripType"] = pd.factorize(vis.TripType, sort=True)[0]
+            vte = it_te.groupby("VisitNumber", as_index=False).agg(Weekday=("Weekday", "first"))
+            hold_ids = vis.VisitNumber.sample(frac=0.2, random_state=0)
+            m = vis.VisitNumber.isin(hold_ids)
+            fit, hold = vis[~m], vis[m]
+            np.save(d / "y_test.npy", hold.TripType.to_numpy())
+            np.save(d / "n_hold.npy", np.array([len(hold)]))
+            fit.rename(columns={"TripType": Y}).to_parquet(d / "train.parquet")
+            pd.concat([hold.drop(columns=["TripType"]), vte], ignore_index=True).to_parquet(d / "test.parquet")
+            items = pd.concat([it_tr.drop(columns=["TripType", "Weekday"]), it_te.drop(columns=["Weekday"])], ignore_index=True)
+            items.to_parquet(d / "items.parquet")
+            meta = dict(task="multiclass", id="VisitNumber", tables={"items": str(d / "items.parquet")})
+        elif case == "optiver":
+            # Optiver Trading at the Close: the latest 20% of days held out; day + seconds as a timestamp.
+            df = pd.read_csv(src / "optiver-trading-at-the-close" / "train.csv").drop(columns=["time_id"])
+            df = df[df.target.notna()].reset_index(drop=True)
+            df["ts"] = pd.Timestamp("2020-01-01") + pd.to_timedelta(df.date_id, unit="D") + pd.to_timedelta(df.seconds_in_bucket, unit="s")
+            cut = df.date_id.quantile(0.8)
+            fit, hold = df[df.date_id < cut], df[df.date_id >= cut]
+            np.save(d / "y_test.npy", hold.target.to_numpy())
+            np.save(d / "n_hold.npy", np.array([len(hold)]))
+            fit.rename(columns={"target": Y}).to_parquet(d / "train.parquet")
+            hold.drop(columns=["target"]).to_parquet(d / "test.parquet")
+            meta = dict(task="regression", id="row_id", tables={})
+        else:
+            # Enefit prosumers: the latest 20% of hours held out (the main table only).
+            df = pd.read_csv(src / "predict-energy-behavior-of-prosumers" / "train.csv").drop(columns=["data_block_id"])
+            df = df[df.target.notna()].reset_index(drop=True)
+            df["datetime"] = pd.to_datetime(df.datetime)
+            cut = df.datetime.quantile(0.8)
+            fit, hold = df[df.datetime < cut], df[df.datetime >= cut]
+            np.save(d / "y_test.npy", hold.target.to_numpy())
+            np.save(d / "n_hold.npy", np.array([len(hold)]))
+            fit.rename(columns={"target": Y}).to_parquet(d / "train.parquet")
+            hold.drop(columns=["target"]).to_parquet(d / "test.parquet")
+            meta = dict(task="regression", id="row_id", tables={})
     (d / "meta.json").write_text(json.dumps(meta))
 
 
@@ -159,6 +217,8 @@ def judge_cell(case, label):
         A = pd.read_parquet(d / label / "train_features.parquet")
         B = pd.read_parquet(d / label / "test_features.parquet").iloc[:n]
     yt = A.pop(Y).to_numpy()
+    if meta["task"] == "multiclass":  # class labels may come back as text
+        yt = pd.to_numeric(pd.Series(yt)).to_numpy().astype(int)
     for X in (A, B):
         if meta["id"] in X.columns:
             X.drop(columns=[meta["id"]], inplace=True)

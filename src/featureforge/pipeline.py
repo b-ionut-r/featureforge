@@ -47,7 +47,7 @@ from featureforge.blocks.forecast_check import _CHECK_CHUNK_ROWS, forecast_check
 from featureforge.blocks.history import event_log_features, history_features, repeats
 from featureforge.blocks.lists import as_lists, json_fields, list_features, unit_ratio_features
 from featureforge.blocks.panel import panel_features
-from featureforge.blocks.relational import (Child, RelatedTables, asof_features, child_model_features, lookup_features,
+from featureforge.blocks.relational import (Child, RelatedTables, bag_features, asof_features, child_model_features, lookup_features,
                                             match_features, time_values)
 from featureforge.blocks.returns import return_features
 from featureforge.forge import FeatureForge
@@ -611,6 +611,13 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
                     Fk[c] = Fk[c].fillna(0)
                 A.insert(0, Fk)
                 del Fk
+            # Bags of the table's many-level categoricals and code columns, as latent components per parent.
+            t = time.time()
+            Bk = bag_features(ch) if stage_fits(f"table {ch.name}: code bags", 3 * frame_bytes(ch.df)) else pd.DataFrame()
+            if Bk.shape[1]:
+                A.insert(1, Bk.reindex(both_main[ch.key].to_numpy()).set_index(both_main.index))
+                print(f"table {ch.name}: code bags, {Bk.shape[1]} columns in {time.time() - t:.0f}s", flush=True)
+            del Bk
             # Whole-history summaries (price paths, latest state) of an as-of table see only the rows before every
             # main row: a later snapshot would hold the very outcome of an earlier labelled row.
             if ch.name in asof:
