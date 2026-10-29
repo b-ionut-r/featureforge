@@ -44,3 +44,11 @@
 {"loss": 2.2939724711622103, "acc": 0.19190836626699712, "case": "tdmob", "label": "hand", "n_cols": 103, "build_seconds": 11.497015476226807}
 {"loss": 0.7752625975376155, "wr2": -0.11108293180003148, "case": "jane", "label": "raw", "n_cols": 92, "build_seconds": 0}
 {"loss": 0.765781130319796, "wr2": -0.08478279845070258, "case": "jane", "label": "v27", "n_cols": 164, "build_seconds": 474.373046875}
+{"loss": 0.7752613217004745, "wr2": -0.11107910591821346, "case": "jane", "label": "v28", "n_cols": 92, "build_seconds": 419.1414797306061}
+{"loss": 8.662064231377602, "case": "optiver", "label": "v28", "n_cols": 201, "build_seconds": 1748.9755263328552}
+{"loss": 0.7349431097589346, "wr2": 0.004099648030388203, "case": "jane", "label": "raw", "n_cols": 92, "build_seconds": 0}
+{"loss": 0.7348883157695086, "wr2": 0.004079402655527753, "case": "jane", "label": "v27", "n_cols": 164, "build_seconds": 474.373046875}
+{"loss": 2.2952103468364675, "acc": 0.19070265925380134, "case": "tdmob", "label": "hand_noh", "n_cols": 77, "build_seconds": 0}
+{"loss": 2.380908833167921, "acc": 0.1600241141402639, "case": "tdmob", "label": "hand_nosvd", "n_cols": 33, "build_seconds": 0}
+{"loss": 2.2959016936024357, "acc": 0.18855918011923103, "case": "tdmob", "label": "v27k32", "n_cols": 104, "build_seconds": 0}
+{"loss": 2.2932397378479528, "acc": 0.19083662669971196, "case": "tdmob", "label": "v27k48", "n_cols": 136, "build_seconds": 0}

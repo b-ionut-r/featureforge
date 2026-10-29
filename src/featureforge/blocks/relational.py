@@ -367,11 +367,12 @@ def _is_code(s: pd.Series) -> bool:
     return len(u) >= 100 and (hi - lo + 1) >= 1.5 * len(u) and np.mean(u % 10 == 0) < 0.3
 
 
-def bag_features(ch: Child, k: int = 16, top_levels: int = 8, max_cols: int = 4) -> pd.DataFrame:
+def bag_features(ch: Child, k: int = 32, top_levels: int = 8, max_cols: int = 4) -> pd.DataFrame:
     """Each parent's bag of a related table's codes, compressed: the parent x level count matrix of a categorical
     with more levels than the aggregates keep one column for (Walmart's 68 departments: 8 kept) or of a code
     column (barcodes, fineline numbers, which the aggregates otherwise average as if they were amounts), TF-IDF
-    weighted and reduced to ``k`` latent components; what a basket holds, as the winners of shopping contests
+    weighted and reduced to ``k`` latent components (TalkingData mobile's apps: 16 components 2.315 log loss,
+    32 2.296, hand-built 40 2.294); what a basket holds, as the winners of shopping contests
     pivoted it. Label-free; fitted over every parent's rows."""
     from scipy import sparse
     from sklearn.decomposition import TruncatedSVD

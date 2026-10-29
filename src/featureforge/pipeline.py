@@ -319,7 +319,8 @@ def child_models_help(main, rel, cm, y, task, max_rows=60_000, seed=0, what="chi
         rows = np.sort(np.random.default_rng(seed).choice(rows, max_rows, replace=False))
     obj = {"binary": "binary", "multiclass": "multiclass"}.get(task, "regression")
     metric = {"binary": "binary_logloss", "multiclass": "multi_logloss"}.get(task, "l2")
-    P = dict(objective=obj, learning_rate=0.1, num_leaves=31,
+    # (multiclass at 0.1: one of Walmart's 38-class folds came out 32% worse with the bags, the other two near even)
+    P = dict(objective=obj, learning_rate=0.05 if task == "multiclass" else 0.1, num_leaves=31,
              min_child_samples=50, feature_fraction=0.5, verbose=-1, num_threads=4, seed=seed,
              deterministic=True, force_col_wise=True)  # histogram mode not chosen by timing (load)
     if task == "multiclass":
