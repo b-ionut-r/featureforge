@@ -47,7 +47,7 @@ from featureforge.blocks.forecast_check import _CHECK_CHUNK_ROWS, forecast_check
 from featureforge.blocks.history import event_log_features, history_features, repeats
 from featureforge.blocks.lists import as_lists, json_fields, list_features, unit_ratio_features
 from featureforge.blocks.panel import panel_features
-from featureforge.blocks.relational import (Child, RelatedTables, asof_features, child_model_features, lookup_features,
+from featureforge.blocks.relational import (Child, RelatedTables, bag_features, asof_features, child_model_features, lookup_features,
                                             match_features, time_values)
 from featureforge.blocks.returns import return_features
 from featureforge.forge import FeatureForge
@@ -295,10 +295,11 @@ def child_model_bytes(size, rows=None) -> float:
     return max(n * (3 * b + 4 * 48), n * (b + w) + 2 * min(n, 3_000_000) * w)
 
 
-def child_models_help(main, rel, cm, y, task, max_rows=60_000, seed=0):
-    """Keep child-row models only when they add to the aggregates: a quick 3-fold LightGBM on
-    training rows with and without them (Home Credit +0.28 AUC points; on Elo they cost
-    hours and lowered the score, the card-level label being noise for each transaction)."""
+def child_models_help(main, rel, cm, y, task, max_rows=60_000, seed=0, what="child models"):
+    """Keep a block (child-row models, code bags) only when it adds to the aggregates: a quick 3-fold LightGBM on
+    training rows with and without it (child models: Home Credit +0.28 AUC points; on Elo they cost hours and
+    lowered the score, the card-level label being noise for each transaction. Code bags: Walmart's trip types
+    gained, Home Credit's day counts read as codes cost 0.001 AUC)."""
     import lightgbm as lgb
     from sklearn.model_selection import KFold, StratifiedKFold
     t = time.time()
@@ -308,15 +309,22 @@ def child_models_help(main, rel, cm, y, task, max_rows=60_000, seed=0):
         for c in X.columns:
             if not (pd.api.types.is_numeric_dtype(X[c]) or isinstance(X[c].dtype, pd.CategoricalDtype)):
                 X[c] = as_text(X[c]).astype("category")
-    yv = y.to_numpy(dtype=float)
+    task = task or ("binary" if y.nunique() == 2 else "regression")
+    if task == "multiclass":
+        yv = pd.factorize(y, sort=True)[0].astype(float)
+    else:
+        yv = y.to_numpy(dtype=float)
     rows = np.arange(len(yv))
     if len(rows) > max_rows:
         rows = np.sort(np.random.default_rng(seed).choice(rows, max_rows, replace=False))
-    binary = (task or ("binary" if y.nunique() == 2 else "regression")) == "binary"
-    P = dict(objective="binary" if binary else "regression", learning_rate=0.1, num_leaves=31,
+    obj = {"binary": "binary", "multiclass": "multiclass"}.get(task, "regression")
+    metric = {"binary": "binary_logloss", "multiclass": "multi_logloss"}.get(task, "l2")
+    P = dict(objective=obj, learning_rate=0.1, num_leaves=31,
              min_child_samples=50, feature_fraction=0.5, verbose=-1, num_threads=4, seed=seed,
              deterministic=True, force_col_wise=True)  # histogram mode not chosen by timing (load)
-    split = (StratifiedKFold(3, shuffle=True, random_state=seed).split(rows, yv[rows]) if binary
+    if task == "multiclass":
+        P["num_class"] = int(yv.max()) + 1
+    split = (StratifiedKFold(3, shuffle=True, random_state=seed).split(rows, yv[rows]) if task != "regression"
              else KFold(3, shuffle=True, random_state=seed).split(rows))
     gains = []
     for fi, vi in split:
@@ -325,10 +333,10 @@ def child_models_help(main, rel, cm, y, task, max_rows=60_000, seed=0):
         for X in (base, full):
             b = lgb.train(P, lgb.Dataset(X.iloc[fi], yv[fi]), 1000, valid_sets=[lgb.Dataset(X.iloc[vi], yv[vi])],
                           callbacks=[lgb.early_stopping(50, verbose=False)])
-            loss.append(b.best_score["valid_0"]["binary_logloss" if binary else "l2"])
+            loss.append(b.best_score["valid_0"][metric])
         gains.append((loss[0] - loss[1]) / loss[0])
     keep = float(np.mean(gains)) > 0 and sum(g > 0 for g in gains) >= 2
-    print(f"child models: {100 * np.mean(gains):+.2f}% CV loss over the aggregates "
+    print(f"{what}: {100 * np.mean(gains):+.2f}% CV loss over the aggregates "
           f"({', '.join(f'{100 * g:+.2f}%' for g in gains)}) -> {'kept' if keep else 'dropped'} "
           f"in {time.time() - t:.0f}s", flush=True)
     return keep
@@ -512,6 +520,7 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
         keyed = [ch for ch in children if ch.name not in asof]
         F = pd.DataFrame()
         A = []
+        bags = []   # code bags, kept below when they add to the aggregates
         for ch in children:
             if ch.name in asof:
                 print(f"table {ch.name}: as of {asof[ch.name]} per main row", flush=True)
@@ -611,6 +620,13 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
                     Fk[c] = Fk[c].fillna(0)
                 A.insert(0, Fk)
                 del Fk
+            # Bags of the table's many-level categoricals and code columns, as latent components per parent.
+            t = time.time()
+            Bk = bag_features(ch) if stage_fits(f"table {ch.name}: code bags", 3 * frame_bytes(ch.df)) else pd.DataFrame()
+            if Bk.shape[1]:
+                bags.append(Bk.reindex(both_main[ch.key].to_numpy()).set_index(both_main.index))
+                print(f"table {ch.name}: code bags, {Bk.shape[1]} columns in {time.time() - t:.0f}s", flush=True)
+            del Bk
             # Whole-history summaries (price paths, latest state) of an as-of table see only the rows before every
             # main row: a later snapshot would hold the very outcome of an earlier labelled row.
             if ch.name in asof:
@@ -665,6 +681,18 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
             L = lookup_features(both_main, lk.df, lk.key, lk.name)
             print(f"table {lk.name}: {L.shape[1]} lookup columns", flush=True)
             A.append(L)
+        if bags:
+            # (the check's frames of both arms on the sampled rows, float32 mostly, and one fit's copies)
+            pos = np.arange(len(tr))
+            if len(pos) > CM_CHECK_PARENTS:
+                pos = np.sort(np.random.default_rng(0).choice(pos, CM_CHECK_PARENTS, replace=False))
+            n_cols = len(tr.columns) + sum(F.shape[1] for F in A + bags)
+            if stage_fits("code bags check", 4 * 4.0 * len(pos) * n_cols) and child_models_help(
+                    tr.drop(columns=[c for c in (cfg.id, cfg.target) if c and c in tr.columns]).iloc[pos],
+                    [Fa.iloc[pos].reset_index(drop=True) for Fa in A], [B.iloc[pos].reset_index(drop=True) for B in bags],
+                    y.iloc[pos].reset_index(drop=True), cfg.task, what="code bags"):
+                A.extend(bags)
+            bags = []
         # The child-row models read their tables again, one at a time (the as-of tables are dropped here too). What
         # the aggregation left behind (its key ranges' parts, freed arrays glibc keeps) goes back: the models' fits
         # are the pipeline's next peak.

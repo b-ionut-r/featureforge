@@ -254,6 +254,35 @@ split: it adds last-year columns, which win the validation month and lose the ev
 history length stays the user's choice. The earlier M5 entry (private 0.8524) used a squared-error judge on
 log sales; its gap to 0.6503 comes from the judge, not from the features.
 
+## Round 5: unseen paid contests and code bags
+
+Six paid Kaggle contests that FeatureForge had never been run on, split like their tests (bench/h2h/contest_check.py,
+the pinned judge, numeric columns as float32 for every arm; data from Kaggle dataset mirrors):
+
+| Contest | metric | raw | FeatureForge | build |
+|---|---|---|---|---|
+| Enefit prosumers (latest 20% of hours held out) | RMSE | 634.3 | **391.1** (-38%) | 2 min |
+| Optiver Trading at the Close (latest 20% of days) | RMSE | 9.151 | **8.664** (-5.3%) | 37 min |
+| Homesite Quote Conversion (stratified 20%) | AUC | 0.9644 | **0.9653** | 25 min |
+| Instacart Market Basket (15,000 users, 20% of users held out) | AUC | 0.6668 | **0.8292** | 32 min |
+| Walmart Trip Type, main before this round | log loss | 3.070 | 1.111 | 48 min |
+| Walmart Trip Type, this round | log loss | 3.070 | **0.703** | 46 min |
+
+Walmart's trip winners pivoted each visit's scanned items by department. FeatureForge read the items table
+(department, scan count, barcode, fineline number) as a wide table, because the two code columns counted as
+amounts, and kept 8 departments of 68. Code columns (whole numbers, at least 100 distinct values, gaps between
+them, few of them round) no longer count against the long-format test and are not spread by level: the items
+become a bag of departments with a quantity, every department seen 20 times gets its column. The winners'
+hand-built visit features score 0.773 under the same judge.
+
+Code bags (a parent x level count matrix of each many-level categorical or code column, TF-IDF weighted and
+reduced to 16 components) took Walmart from 1.111 to 0.828 before the pivot fix and to 0.699 with it (0.703
+without). On Home Credit they read day counts (SK_DPD, CREDIT_DAY_OVERDUE) as codes and cost 0.0004 AUC, so they
+are now kept only when a quick 3-fold check on 60,000 training rows says they add to the aggregates: dropped on
+Home Credit (features identical to before, AUC 0.8020 under the float32 judge) and on Walmart (the multiclass
+check is noisy: folds -0.6%, -32%, +5.8%). Instacart's user and product tables are as-of tables (the user repeats
+in the main table), which bags do not cover: unchanged at 0.8292.
+
 ## Corrections and limits
 
 - **diabetes130.** Patients repeat across rows, and both FeatureForge versions counted each patient's visits
