@@ -23,3 +23,4 @@
 {"loss": 0.828383982017548, "acc": 0.7342043376012543, "case": "walmart", "label": "v23", "n_cols": 266, "build_seconds": 2345.141092300415}
 {"loss": 8.663846942757068, "case": "optiver", "label": "v22", "n_cols": 201, "build_seconds": 2220.4753279685974}
 {"loss": 0.6985871741363088, "acc": 0.758975698980925, "case": "walmart", "label": "v24", "n_cols": 204, "build_seconds": 2247.934707403183}
+{"loss": 0.2320183771599288, "auc": 0.801632207938145, "case": "hc", "label": "v24", "n_cols": 1514, "build_seconds": 3361.6312396526337}
