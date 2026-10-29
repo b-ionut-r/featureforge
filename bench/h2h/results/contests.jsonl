@@ -27,3 +27,4 @@
 {"loss": 0.31245637526317904, "auc": 0.6668241531727104, "case": "instacart", "label": "raw", "n_cols": 8, "build_seconds": 0}
 {"loss": 0.2538695426571895, "auc": 0.8291690353976986, "case": "instacart", "label": "v22", "n_cols": 347, "build_seconds": 1599.0447642803192}
 {"loss": 0.2538695426571895, "auc": 0.8291690353976986, "case": "instacart", "label": "v25", "n_cols": 347, "build_seconds": 1733.6216003894806}
+{"loss": 0.23204193084044497, "auc": 0.8020188936549979, "case": "hc", "label": "v26", "n_cols": 1355, "build_seconds": 3797.9283649921417}
