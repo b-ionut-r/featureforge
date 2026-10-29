@@ -44,7 +44,7 @@ import numpy as np
 import pandas as pd
 
 from featureforge.blocks.forecast_check import _CHECK_CHUNK_ROWS, forecast_check
-from featureforge.blocks.history import event_log_features, history_features, repeats
+from featureforge.blocks.history import recent_window_features, event_log_features, history_features, repeats
 from featureforge.blocks.lists import as_lists, json_fields, list_features, unit_ratio_features
 from featureforge.blocks.panel import panel_features, panel_helps
 from featureforge.blocks.relational import (Child, RelatedTables, bag_features, asof_features, child_model_features, lookup_features,
@@ -295,7 +295,7 @@ def child_model_bytes(size, rows=None) -> float:
     return max(n * (3 * b + 4 * 48), n * (b + w) + 2 * min(n, 3_000_000) * w)
 
 
-def child_models_help(main, rel, cm, y, task, max_rows=60_000, seed=0, what="child models"):
+def child_models_help(main, rel, cm, y, task, max_rows=60_000, seed=0, what="child models", min_gain=0.0):
     """Keep a block (child-row models, code bags) only when it adds to the aggregates: a quick 3-fold LightGBM on
     training rows with and without it (child models: Home Credit +0.28 AUC points; on Elo they cost hours and
     lowered the score, the card-level label being noise for each transaction. Code bags: Walmart's trip types
@@ -336,7 +336,7 @@ def child_models_help(main, rel, cm, y, task, max_rows=60_000, seed=0, what="chi
                           callbacks=[lgb.early_stopping(50, verbose=False)])
             loss.append(b.best_score["valid_0"][metric])
         gains.append((loss[0] - loss[1]) / loss[0])
-    keep = float(np.mean(gains)) > 0 and sum(g > 0 for g in gains) >= 2
+    keep = float(np.mean(gains)) > min_gain and sum(g > 0 for g in gains) >= 2
     print(f"{what}: {100 * np.mean(gains):+.2f}% CV loss over the aggregates "
           f"({', '.join(f'{100 * g:+.2f}%' for g in gains)}) -> {'kept' if keep else 'dropped'} "
           f"in {time.time() - t:.0f}s", flush=True)
@@ -522,6 +522,7 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
         F = pd.DataFrame()
         A = []
         bags = []   # code bags, kept below when they add to the aggregates
+        recent = []   # recent-window summaries, likewise
         for ch in children:
             if ch.name in asof:
                 print(f"table {ch.name}: as of {asof[ch.name]} per main row", flush=True)
@@ -651,6 +652,12 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
                 print(f"table {ch.name}: latest-state history, {Hk.shape[1]} columns in {time.time() - t:.0f}s", flush=True)
                 A.insert(1, Hk)
                 del Hk
+                t = time.time()
+                Wk = recent_window_features(ch)
+                if Wk.shape[1]:
+                    recent.append(Wk.reindex(both_main[ch.key].to_numpy()).set_index(both_main.index))
+                    print(f"table {ch.name}: recent windows, {Wk.shape[1]} columns in {time.time() - t:.0f}s", flush=True)
+                del Wk
             Rk = None
             if one_at_a_time:
                 ch.df = None
@@ -682,6 +689,17 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
             L = lookup_features(both_main, lk.df, lk.key, lk.name)
             print(f"table {lk.name}: {L.shape[1]} lookup columns", flush=True)
             A.append(L)
+        if recent:
+            pos = np.arange(len(tr))
+            if len(pos) > CM_CHECK_PARENTS:
+                pos = np.sort(np.random.default_rng(0).choice(pos, CM_CHECK_PARENTS, replace=False))
+            n_cols = len(tr.columns) + sum(F.shape[1] for F in A + recent)
+            if stage_fits("recent windows check", 4 * 4.0 * len(pos) * n_cols) and child_models_help(
+                    tr.drop(columns=[c for c in (cfg.id, cfg.target) if c and c in tr.columns]).iloc[pos],
+                    [Fa.iloc[pos].reset_index(drop=True) for Fa in A], [R.iloc[pos].reset_index(drop=True) for R in recent],
+                    y.iloc[pos].reset_index(drop=True), cfg.task, what="recent windows", min_gain=0.005):
+                A.extend(recent)
+            recent = []
         if bags:
             # (the check's frames of both arms on the sampled rows, float32 mostly, and one fit's copies)
             pos = np.arange(len(tr))
@@ -691,7 +709,9 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
             if stage_fits("code bags check", 4 * 4.0 * len(pos) * n_cols) and child_models_help(
                     tr.drop(columns=[c for c in (cfg.id, cfg.target) if c and c in tr.columns]).iloc[pos],
                     [Fa.iloc[pos].reset_index(drop=True) for Fa in A], [B.iloc[pos].reset_index(drop=True) for B in bags],
-                    y.iloc[pos].reset_index(drop=True), cfg.task, what="code bags"):
+                    y.iloc[pos].reset_index(drop=True), cfg.task, what="code bags", min_gain=0.005):
+                # (32 bag columns a table must earn 0.5%: Home Credit's day counts read as codes passed at +0.19%
+                # and cost 0.0008 AUC; TalkingData mobile's apps earned +2.7%)
                 A.extend(bags)
             bags = []
         # The child-row models read their tables again, one at a time (the as-of tables are dropped here too). What
