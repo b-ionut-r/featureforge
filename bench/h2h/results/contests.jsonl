@@ -28,3 +28,12 @@
 {"loss": 0.2538695426571895, "auc": 0.8291690353976986, "case": "instacart", "label": "v22", "n_cols": 347, "build_seconds": 1599.0447642803192}
 {"loss": 0.2538695426571895, "auc": 0.8291690353976986, "case": "instacart", "label": "v25", "n_cols": 347, "build_seconds": 1733.6216003894806}
 {"loss": 0.23204193084044497, "auc": 0.8020188936549979, "case": "hc", "label": "v26", "n_cols": 1355, "build_seconds": 3797.9283649921417}
+{"loss": 0.7033850657560025, "acc": 0.7543767964463026, "case": "walmart", "label": "v26", "n_cols": 154, "build_seconds": 2758.2860720157623}
+{"loss": 0.2538695426571895, "auc": 0.8291690353976986, "case": "instacart", "label": "v26", "n_cols": 347, "build_seconds": 1908.0408697128296}
+{"loss": 0.23204193084044497, "auc": 0.8020188936549979, "case": "hc", "label": "v17", "n_cols": 1355, "build_seconds": 4560.461189031601}
+{"loss": 3.0697639720472534, "acc": 0.12532009406846092, "case": "walmart", "label": "raw", "n_cols": 1, "build_seconds": 0}
+{"loss": 634.2702846405977, "case": "enefit", "label": "raw", "n_cols": 6, "build_seconds": 0}
+{"loss": 391.07306575653365, "case": "enefit", "label": "v22", "n_cols": 62, "build_seconds": 95.36751079559326}
+{"loss": 0.17119896251275663, "auc": 0.964435759251419, "case": "homesite", "label": "raw", "n_cols": 297, "build_seconds": 0}
+{"loss": 0.16882968910815624, "auc": 0.9652750983171978, "case": "homesite", "label": "v22", "n_cols": 357, "build_seconds": 1475.4455971717834}
+{"loss": 9.151157275420484, "case": "optiver", "label": "raw", "n_cols": 15, "build_seconds": 0}
