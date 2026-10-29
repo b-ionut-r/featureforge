@@ -222,6 +222,22 @@ def split(case):
         fit.rename(columns={"responder_6": Y}).to_parquet(d / "train.parquet")
         hold.drop(columns=["responder_6"]).to_parquet(d / "test.parquet")
         meta = dict(task="regression", id="row_id", tables={})
+    elif case == "elo":
+        # Elo Merchant Category Recommendation ($50k): a card's loyalty score from its new-merchant purchases (the
+        # mirror's 190 MB table; the 2.8 GB history left out). 20% of training cards held out (seed 0), the real
+        # test cards unlabeled too.
+        src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c")) / "elo"
+        tr, te_real = pd.read_csv(src / "train.csv"), pd.read_csv(src / "test.csv")
+        hold_ids = tr.card_id.sample(frac=0.2, random_state=0)
+        m = tr.card_id.isin(hold_ids)
+        fit, hold = tr[~m], tr[m]
+        np.save(d / "y_test.npy", hold.target.to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        fit.rename(columns={"target": Y}).to_parquet(d / "train.parquet")
+        pd.concat([hold.drop(columns=["target"]), te_real], ignore_index=True).to_parquet(d / "test.parquet")
+        nm = pd.read_csv(src / "new_merchant_transactions.csv", parse_dates=["purchase_date"])
+        nm.to_parquet(d / "new_merchant.parquet")
+        meta = dict(task="regression", id="card_id", tables={"new": str(d / "new_merchant.parquet") + ":card_id:purchase_date"})
     elif case in ("homesite", "walmart", "optiver", "enefit"):
         # Paid contests never run before (Kaggle dataset mirrors under FRESH_C), each split like its test.
         src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c"))
