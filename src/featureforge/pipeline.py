@@ -793,7 +793,7 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
                   f"in {time.time() - t:.0f}s", flush=True)
     if cfg.panel == "auto":
         t = time.time()
-        Ptr, Pte, P = panel_features(Xtr, Xte)
+        Ptr, Pte, P = panel_features(Xtr, Xte, y=y if cfg.task != "multiclass" else None)
         if P is not None and Ptr.shape[1]:
             keep, note = panel_helps(Xtr, Ptr, y, P["day"], cfg.task)
             print(f"panel check: {note} -> {'kept' if keep else 'dropped'} ({time.time() - t:.0f}s)", flush=True)

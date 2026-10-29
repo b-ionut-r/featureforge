@@ -90,8 +90,8 @@ def find_panel(X: pd.DataFrame, U: Optional[pd.DataFrame] = None, sample: int = 
 UNIT_WORDS = (("price", "px", "wap"), ("size", "qty", "quantity", "volume", "amount"))
 
 
-def panel_features(Xtr: pd.DataFrame, Xte: pd.DataFrame, lags: Tuple[int, ...] = (1, 2, 3), max_cols: int = 12
-                   ) -> Tuple[pd.DataFrame, pd.DataFrame, Optional[dict]]:
+def panel_features(Xtr: pd.DataFrame, Xte: pd.DataFrame, lags: Tuple[int, ...] = (1, 2, 3), max_cols: int = 12,
+                   y=None) -> Tuple[pd.DataFrame, pd.DataFrame, Optional[dict]]:
     """Imbalances between same-unit columns (named prices, named sizes) and their rank within the moment; per
     numeric column: value minus the moment's mean over entities, rank within the moment, change over the
     entity's last ``lags`` steps of the day, and that 1-step change against the moment's mean change. Train and
@@ -103,7 +103,15 @@ def panel_features(Xtr: pd.DataFrame, Xte: pd.DataFrame, lags: Tuple[int, ...] =
     e, m, d = P["entity"], P["moment"], P["day"]
     keys = {e, d, *m}
     num = [c for c in Xtr.columns if c not in keys and pd.api.types.is_numeric_dtype(Xtr[c])
-           and not pd.api.types.is_bool_dtype(Xtr[c]) and Xtr[c].iloc[:200_000].nunique() > 20][:max_cols]
+           and not pd.api.types.is_bool_dtype(Xtr[c]) and Xtr[c].iloc[:200_000].nunique() > 20]
+    if y is not None and len(num) > max_cols:
+        # More numeric columns than the block takes (Jane Street's 79 anonymous features): the ones whose rank
+        # follows the target most closely on training rows, not the first ones in the file.
+        yr = pd.Series(pd.factorize(pd.Series(y), sort=True)[0] if not pd.api.types.is_numeric_dtype(pd.Series(y))
+                       else np.asarray(y, dtype=float)).iloc[:500_000].rank()
+        score = {c: abs(Xtr[c].iloc[:500_000].reset_index(drop=True).rank().corr(yr)) for c in num}
+        num = sorted(num, key=lambda c: -np.nan_to_num(score[c]))
+    num = num[:max_cols]
     if not num:
         return pd.DataFrame(index=range(n)), pd.DataFrame(index=range(len(Xte))), None
 
