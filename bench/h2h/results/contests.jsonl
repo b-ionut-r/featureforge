@@ -24,3 +24,6 @@
 {"loss": 8.663846942757068, "case": "optiver", "label": "v22", "n_cols": 201, "build_seconds": 2220.4753279685974}
 {"loss": 0.6985871741363088, "acc": 0.758975698980925, "case": "walmart", "label": "v24", "n_cols": 204, "build_seconds": 2247.934707403183}
 {"loss": 0.2320183771599288, "auc": 0.801632207938145, "case": "hc", "label": "v24", "n_cols": 1514, "build_seconds": 3361.6312396526337}
+{"loss": 0.31245637526317904, "auc": 0.6668241531727104, "case": "instacart", "label": "raw", "n_cols": 8, "build_seconds": 0}
+{"loss": 0.2538695426571895, "auc": 0.8291690353976986, "case": "instacart", "label": "v22", "n_cols": 347, "build_seconds": 1599.0447642803192}
+{"loss": 0.2538695426571895, "auc": 0.8291690353976986, "case": "instacart", "label": "v25", "n_cols": 347, "build_seconds": 1733.6216003894806}
