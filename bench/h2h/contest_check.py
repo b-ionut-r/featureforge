@@ -238,6 +238,24 @@ def split(case):
         nm = pd.read_csv(src / "new_merchant_transactions.csv", parse_dates=["purchase_date"])
         nm.to_parquet(d / "new_merchant.parquet")
         meta = dict(task="regression", id="card_id", tables={"new": str(d / "new_merchant.parquet") + ":card_id:purchase_date"})
+    elif case == "plasticc":
+        # PLAsTiCC Astronomical Classification ($25k): an object's class (14) from its metadata and its light curve
+        # (flux per passband over time) as a related table. The training objects only, with the contest's columns
+        # (the unblinded release's true_* and simulation columns left out); 20% held out, stratified (seed 0).
+        src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c")) / "plasticc"
+        md = pd.read_csv(src / "plasticc_train_metadata.csv", skipinitialspace=True)
+        md = md[["object_id", "ra", "decl", "ddf_bool", "hostgal_specz", "hostgal_photoz", "hostgal_photoz_err",
+                 "distmod", "mwebv", "target"]]
+        md["target"] = pd.factorize(md.target, sort=True)[0]
+        from sklearn.model_selection import train_test_split
+        a, b = train_test_split(np.arange(len(md)), test_size=0.2, random_state=0, stratify=md.target)
+        fit, hold = md.iloc[np.sort(a)], md.iloc[np.sort(b)]
+        np.save(d / "y_test.npy", hold.target.to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        fit.rename(columns={"target": Y}).to_parquet(d / "train.parquet")
+        hold.drop(columns=["target"]).to_parquet(d / "test.parquet")
+        pd.read_csv(src / "plasticc_train_lightcurves.csv").to_parquet(d / "lightcurves.parquet")
+        meta = dict(task="multiclass", id="object_id", tables={"lc": str(d / "lightcurves.parquet") + ":object_id:mjd"})
     elif case in ("homesite", "walmart", "optiver", "enefit"):
         # Paid contests never run before (Kaggle dataset mirrors under FRESH_C), each split like its test.
         src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c"))
