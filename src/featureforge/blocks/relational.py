@@ -130,7 +130,12 @@ class RelatedTables:
         # log_feature / volume, event_type) is a bag of attributes per entity: every level
         # seen 20 times gets its own column, and the values are spread by level (the pivot
         # contest winners used); wide children keep their most common levels.
-        bag = len(cats) == 1 and len(feats) <= 3
+        # Code columns (barcodes, product lines: see _is_code) do not count against the long-format test, and are not
+        # spread by level (a sum of barcodes per department means nothing): Walmart's scanned items (department,
+        # scan count, barcode, fineline number) are a bag of departments with a quantity, as the winners pivoted them.
+        codes = self._code_cols(ch.name, df, num)
+        plain = [c for c in num if c not in codes]
+        bag = len(cats) == 1 and 1 + len(plain) <= 3
         for c in cats:
             s = as_text(df[c])
             if (ch.name, c) not in self.levels_:
@@ -142,7 +147,7 @@ class RelatedTables:
             s = as_text(df[cats[0]])
             for lv in self.levels_[(ch.name, cats[0])]:
                 m = (s == lv).to_numpy()
-                for c in num:
+                for c in plain:
                     parts.append(pd.DataFrame({f"{c}@{cats[0]}={lv}": np.where(m, df[c].to_numpy(dtype=float), 0.0)
                                                .astype(np.float32)}, index=df.index))
         W = pd.concat(parts, axis=1)
@@ -223,13 +228,20 @@ class RelatedTables:
         keep = [c for c in res.columns if res[c].notna().mean() > 0.01 and res[c].nunique() > 1]
         return res[keep].astype(np.float32)
 
-    def _kinds(self, df: pd.DataFrame, ids) -> tuple:
+    def _code_cols(self, name: str, df: pd.DataFrame, num) -> set:
+        """The code columns among a table's numerics, decided on its first call (every chunk of a table alike)."""
+        if (name, "__codes__") not in self.levels_:
+            self.levels_[(name, "__codes__")] = {c for c in num if _is_code(df[c])}
+        return self.levels_[(name, "__codes__")]
+
+    def _kinds(self, df: pd.DataFrame, ids, name: str = "") -> tuple:
         """(categorical columns, numeric columns, long-format bag?) of a child table, as _aggregate reads them."""
         feats = [c for c in df.columns if c not in ids]
         cats = [c for c in feats if df[c].dtype == object or isinstance(df[c].dtype, pd.CategoricalDtype)
                 or pd.api.types.is_string_dtype(df[c]) or df[c].dtype == bool]
         num = [c for c in feats if c not in cats and pd.api.types.is_numeric_dtype(df[c])]
-        return cats, num, len(cats) == 1 and len(feats) <= 3
+        plain = [c for c in num if c not in self._code_cols(name, df, num)]
+        return cats, num, len(cats) == 1 and 1 + len(plain) <= 3
 
     def _aggregate_fitting(self, ch: Child, key: str) -> pd.DataFrame:
         """``_aggregate``, or when its frame of per-row values would not fit in the memory free now (the
@@ -239,7 +251,7 @@ class RelatedTables:
         12-million-row event log with a few categorical columns crossed the 14.3 GB limit while its frame was
         built."""
         ids = {key, *ch.drop} | {g.key for g in ch.children if g.key != key}
-        cats, num, bag = self._kinds(ch.df, ids)
+        cats, num, bag = self._kinds(ch.df, ids, ch.name)
         levels = sum(min(ch.df[c].nunique(), 300 if bag else self.top_levels) for c in cats)
         dense = 1 + len(num) + (2 * self.max_pairs if self.row_pairs else 0)
         width = dense + levels + (levels * len(num) if bag else 0)
@@ -254,7 +266,7 @@ class RelatedTables:
             return self._aggregate(ch, key)
         df = self._flatten(ch)
         flat = Child(ch.name, df, key=ch.key, time=ch.time, drop=sorted(ids - {key}))
-        cats, num, bag = self._kinds(df, ids)
+        cats, num, bag = self._kinds(df, ids, ch.name)
         for c in cats:
             if (ch.name, c) not in self.levels_:
                 vc = as_text(df[c]).value_counts()
@@ -365,12 +377,19 @@ def bag_features(ch: Child, k: int = 16, top_levels: int = 8, max_cols: int = 4)
     from sklearn.decomposition import TruncatedSVD
     from sklearn.feature_extraction.text import TfidfTransformer
     df, key = ch.df, ch.key
-    ids = {key, *ch.drop} | {g.key for g in ch.children}
+    # Other tables' ids are candidates too (a purchase's product_id, a transaction's merchant_id): the recurrence
+    # test below drops the ones each parent holds alone (Home Credit's SK_ID_PREV).
+    ids = {key} | {g.key for g in ch.children}
     picks = []
     for c in df.columns:
         if c in ids or c == ch.time:
             continue
         s = df[c]
+        if c in ch.drop:
+            nu = s.nunique()
+            if nu > top_levels:
+                picks.append((nu, c))
+            continue
         cat = s.dtype == object or isinstance(s.dtype, pd.CategoricalDtype) or pd.api.types.is_string_dtype(s)
         if cat:
             nu = s.nunique()

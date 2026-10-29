@@ -18,3 +18,8 @@
 {"loss": 0.07123236773554956, "auc": 0.9448351752514639, "case": "ieeefull", "label": "v18", "n_cols": 709, "build_seconds": 4450.440720796585}
 {"loss": 0.002834836424827027, "auc": 0.9998732574238063, "case": "paysim", "label": "raw", "n_cols": 9, "build_seconds": 0}
 {"loss": 5.89641731389539e-05, "auc": 0.9999999795981207, "case": "paysim", "label": "v19", "n_cols": 40, "build_seconds": 3103.5227150917053}
+{"loss": 1.1111631496008052, "acc": 0.6704990854455187, "case": "walmart", "label": "v22", "n_cols": 26, "build_seconds": 2864.047271490097}
+{"loss": 0.7731974689011867, "acc": 0.7344656388816305, "case": "walmart", "label": "hand", "n_cols": 95, "build_seconds": 24.721726894378662}
+{"loss": 0.828383982017548, "acc": 0.7342043376012543, "case": "walmart", "label": "v23", "n_cols": 266, "build_seconds": 2345.141092300415}
+{"loss": 8.663846942757068, "case": "optiver", "label": "v22", "n_cols": 201, "build_seconds": 2220.4753279685974}
+{"loss": 0.6985871741363088, "acc": 0.758975698980925, "case": "walmart", "label": "v24", "n_cols": 204, "build_seconds": 2247.934707403183}

@@ -130,6 +130,45 @@ def split(case):
         fit.rename(columns={"isFraud": Y}).to_parquet(d / "train.parquet")
         hold.drop(columns=["isFraud"]).to_parquet(d / "test.parquet")
         meta = dict(task="binary", id="tx_id", tables={})
+    elif case == "instacart":
+        # Instacart Market Basket ($25k): which previously bought products 15,000 users (seed 0) reorder in their
+        # next order. Rows = (user, product) pairs; 20% of users held out. Related tables, all from prior orders:
+        # each pair's purchase history, each user's purchases (products, aisles, departments), each product's.
+        src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c")) / "instacart"
+        orders = pd.read_csv(src / "orders.csv")
+        rng = np.random.default_rng(0)
+        users = rng.choice(orders.loc[orders.eval_set == "train", "user_id"].unique(), 15000, replace=False)
+        orders = orders[orders.user_id.isin(users)].copy()
+        orders["days_since_prior_order"] = orders["days_since_prior_order"].fillna(0)
+        prior_o, train_o = orders[orders.eval_set == "prior"], orders[orders.eval_set == "train"]
+        prod = pd.read_csv(src / "products.csv")[["product_id", "aisle_id", "department_id"]]
+        op = pd.read_csv(src / "order_products__prior.csv")
+        op = op[op.order_id.isin(prior_o.order_id)].merge(
+            prior_o[["order_id", "user_id", "order_number", "order_dow", "order_hour_of_day", "days_since_prior_order"]], on="order_id")
+        op = op.merge(prod, on="product_id", how="left")
+        opt = pd.read_csv(src / "order_products__train.csv")
+        opt = opt[opt.order_id.isin(train_o.order_id)].merge(train_o[["order_id", "user_id"]], on="order_id")
+        pairs = op[["user_id", "product_id"]].drop_duplicates().merge(
+            train_o[["user_id", "order_number", "order_dow", "order_hour_of_day", "days_since_prior_order"]], on="user_id")
+        pairs = pairs.merge(prod, on="product_id", how="left")
+        lab = set(zip(opt.user_id, opt.product_id))
+        pairs[Y] = [int((u, p) in lab) for u, p in zip(pairs.user_id, pairs.product_id)]
+        pairs.insert(0, "up", pairs.user_id.astype(np.int64) * 1_000_000 + pairs.product_id)
+        op["up"] = op.user_id.astype(np.int64) * 1_000_000 + op.product_id
+        hold_u = set(np.random.default_rng(1).choice(users, 3000, replace=False))
+        m = pairs.user_id.isin(hold_u).to_numpy()
+        fit, hold = pairs[~m], pairs[m]
+        np.save(d / "y_test.npy", hold[Y].to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        fit.to_parquet(d / "train.parquet")
+        hold.drop(columns=[Y]).to_parquet(d / "test.parquet")
+        hist = ["order_number", "add_to_cart_order", "reordered", "order_dow", "order_hour_of_day", "days_since_prior_order"]
+        op[["up"] + hist].to_parquet(d / "up_hist.parquet")
+        op[["user_id", "product_id", "aisle_id", "department_id"] + hist].to_parquet(d / "user_items.parquet")
+        op[["product_id", "add_to_cart_order", "reordered", "order_number", "days_since_prior_order"]].to_parquet(d / "prod_hist.parquet")
+        meta = dict(task="binary", id="up", tables={"up_hist": str(d / "up_hist.parquet") + ":up:order_number",
+                                                     "user_items": str(d / "user_items.parquet") + ":user_id:order_number",
+                                                     "prod_hist": str(d / "prod_hist.parquet") + ":product_id"})
     elif case in ("homesite", "walmart", "optiver", "enefit"):
         # Paid contests never run before (Kaggle dataset mirrors under FRESH_C), each split like its test.
         src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c"))
