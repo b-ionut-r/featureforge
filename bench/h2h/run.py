@@ -54,6 +54,8 @@ def judge(Xtr, ytr, Xte, yte, task, seed, threads=4, preds=None):
              max_cat_to_onehot=8, cat_smooth=50, **({"num_class": k} if k else {}))
     perm = np.random.default_rng(seed + 1).permutation(n)
     fit, va = np.sort(perm[: int(0.85 * n)]), np.sort(perm[int(0.85 * n):])
+    if os.environ.get("H2H_JUDGE_ES_LAST"):  # time-ordered market cases: stop on the latest 15% of rows (a random
+        fit, va = np.arange(int(0.85 * n)), np.arange(int(0.85 * n), n)   # 15% sits beside its own moments)
     if lean:
         full = lgb.Dataset(Xtr, ytr, params=dict(P), free_raw_data=True).construct()
         b = lgb.train(dict(P, seed=0), full.subset(fit), 5000, valid_sets=[full.subset(va)],
