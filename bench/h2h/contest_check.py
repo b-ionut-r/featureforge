@@ -169,6 +169,37 @@ def split(case):
         meta = dict(task="binary", id="up", tables={"up_hist": str(d / "up_hist.parquet") + ":up:order_number",
                                                      "user_items": str(d / "user_items.parquet") + ":user_id:order_number",
                                                      "prod_hist": str(d / "prod_hist.parquet") + ":product_id"})
+    elif case == "tdmob":
+        # TalkingData Mobile User Demographics ($25k): a phone's gender-age group (12 classes) from its brand, model and
+        # apps. 20% of training devices held out (seed 0), the real test devices unlabeled too. Related tables, keyed by
+        # device: its events (time, place), its apps (events and active events per app, from the event log) and its
+        # apps' labels.
+        src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c")) / "tdmob"
+        tr = pd.read_csv(src / "gender_age_train.csv")[["device_id", "group"]]
+        te_real = pd.read_csv(src / "gender_age_test.csv")
+        ph = pd.read_csv(src / "phone_brand_device_model.csv").drop_duplicates("device_id")
+        tr["group"] = pd.factorize(tr.group, sort=True)[0]
+        hold_ids = tr.device_id.sample(frac=0.2, random_state=0)
+        m = tr.device_id.isin(hold_ids)
+        fit, hold = tr[~m].merge(ph, on="device_id", how="left"), tr[m].merge(ph, on="device_id", how="left")
+        np.save(d / "y_test.npy", hold.group.to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        fit.rename(columns={"group": Y}).to_parquet(d / "train.parquet")
+        pd.concat([hold.drop(columns=["group"]), te_real.merge(ph, on="device_id", how="left")],
+                  ignore_index=True).to_parquet(d / "test.parquet")
+        ev = pd.read_csv(src / "events.csv", parse_dates=["timestamp"])
+        ev[["device_id", "timestamp", "longitude", "latitude"]].to_parquet(d / "events.parquet")
+        ae = pd.read_csv(src / "app_events.csv", usecols=["event_id", "app_id", "is_active"])
+        ae = ae.merge(ev[["event_id", "device_id"]], on="event_id")
+        da = ae.groupby(["device_id", "app_id"], as_index=False).agg(n_events=("event_id", "size"), n_active=("is_active", "sum"))
+        del ae
+        da.to_parquet(d / "device_apps.parquet")
+        al = pd.read_csv(src / "app_labels.csv").drop_duplicates()
+        dl = da[["device_id", "app_id"]].merge(al, on="app_id")[["device_id", "label_id"]]
+        dl.groupby(["device_id", "label_id"], as_index=False).size().rename(columns={"size": "n_apps"}).to_parquet(d / "device_labels.parquet")
+        meta = dict(task="multiclass", id="device_id", tables={"events": str(d / "events.parquet") + ":device_id:timestamp",
+                                                                "apps": str(d / "device_apps.parquet") + ":device_id",
+                                                                "labels": str(d / "device_labels.parquet") + ":device_id"})
     elif case in ("homesite", "walmart", "optiver", "enefit"):
         # Paid contests never run before (Kaggle dataset mirrors under FRESH_C), each split like its test.
         src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c"))
