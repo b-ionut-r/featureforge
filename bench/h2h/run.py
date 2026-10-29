@@ -34,7 +34,7 @@ COMP_PY = os.environ.get("H2H_COMP_PY", "/home/user/venv_comp/bin/python")  # Op
 PY = {"featureforge": sys.executable, "llm": sys.executable}
 
 
-def judge(Xtr, ytr, Xte, yte, task, seed, threads=4):
+def judge(Xtr, ytr, Xte, yte, task, seed, threads=4, preds=None):
     """The pinned judge: LightGBM, early stopping on a random 15% of training rows, then three seeds
     refit on all training rows at 1.1x the best iteration, predictions averaged."""
     lean = bool(os.environ.get("H2H_JUDGE_F32"))  # big cases: no copies, one binned dataset shared by every fit
@@ -71,6 +71,8 @@ def judge(Xtr, ytr, Xte, yte, task, seed, threads=4):
         return dict(loss=float(log_loss(yte, pp, labels=np.arange(k))), acc=float(np.mean(p.argmax(1) == yte)))
     if task == "binary":
         return dict(loss=float(log_loss(yte, np.clip(p, 1e-6, 1 - 1e-6))), auc=float(roc_auc_score(yte, p)))
+    if preds is not None:
+        preds.append(p)
     return dict(loss=float(mean_squared_error(yte, p) ** 0.5))
 
 

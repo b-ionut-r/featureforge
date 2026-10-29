@@ -200,6 +200,28 @@ def split(case):
         meta = dict(task="multiclass", id="device_id", tables={"events": str(d / "events.parquet") + ":device_id:timestamp",
                                                                 "apps": str(d / "device_apps.parquet") + ":device_id",
                                                                 "labels": str(d / "device_labels.parquet") + ":device_id"})
+    elif case == "jane":
+        # Jane Street Real-Time Market Data ($120k): responder_6 of 39 symbols, from the mirror's last partition: its
+        # last 59 days, every 4th time step (each step's cross-section whole). The latest 12 days held out. Each row
+        # carries the previous day's responders at its step and symbol, as the contest serves them.
+        src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c")) / "jane"
+        df = pd.read_parquet(src / "part-9.parquet", filters=[("date_id", ">=", 1639)])
+        df = df[df.time_id % 4 == 0].reset_index(drop=True)
+        resp = [f"responder_{i}" for i in range(9)]
+        lag = df[["date_id", "time_id", "symbol_id"] + resp].copy()
+        lag["date_id"] += 1
+        df = df.merge(lag.rename(columns={r: f"{r}_lag_1" for r in resp}), on=["date_id", "time_id", "symbol_id"], how="left")
+        df = df[df.date_id >= 1640].sort_values(["date_id", "time_id", "symbol_id"]).reset_index(drop=True)
+        df = df.drop(columns=[r for r in resp if r != "responder_6"])
+        df.insert(0, "row_id", np.arange(len(df)))
+        cut = sorted(df.date_id.unique())[-12]
+        fit, hold = df[df.date_id < cut], df[df.date_id >= cut]
+        np.save(d / "y_test.npy", hold.responder_6.to_numpy())
+        np.save(d / "w_test.npy", hold.weight.to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        fit.rename(columns={"responder_6": Y}).to_parquet(d / "train.parquet")
+        hold.drop(columns=["responder_6"]).to_parquet(d / "test.parquet")
+        meta = dict(task="regression", id="row_id", tables={})
     elif case in ("homesite", "walmart", "optiver", "enefit"):
         # Paid contests never run before (Kaggle dataset mirrors under FRESH_C), each split like its test.
         src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c"))
@@ -301,7 +323,11 @@ def judge_cell(case, label):
             for c in X.columns:
                 if pd.api.types.is_numeric_dtype(X[c]) and not pd.api.types.is_bool_dtype(X[c]) and X[c].dtype != np.float32:
                     X[c] = X[c].astype(np.float32)
-    r = judge(A, yt, B[A.columns], y, meta["task"], 0)
+    preds = []
+    r = judge(A, yt, B[A.columns], y, meta["task"], 0, preds=preds)
+    if (d / "w_test.npy").exists() and preds:   # the contest's weighted zero-mean R2
+        w = np.load(d / "w_test.npy")
+        r["wr2"] = float(1 - np.sum(w * (y - preds[0]) ** 2) / np.sum(w * y ** 2))
     secs = json.loads((d / label / "seconds.json").read_text())["seconds"] if label != "raw" else 0
     r.update(case=case, label=label, n_cols=A.shape[1], build_seconds=secs)
     print(json.dumps(r))

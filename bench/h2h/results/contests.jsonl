@@ -38,3 +38,4 @@
 {"loss": 0.16882968910815624, "auc": 0.9652750983171978, "case": "homesite", "label": "v22", "n_cols": 357, "build_seconds": 1475.4455971717834}
 {"loss": 9.151157275420484, "case": "optiver", "label": "raw", "n_cols": 15, "build_seconds": 0}
 {"loss": 0.25370673126086896, "auc": 0.8294641927159129, "case": "instacart", "label": "hand", "n_cols": 33, "build_seconds": 11.681129455566406}
+{"loss": 2.3974376592986646, "acc": 0.15145019760198272, "case": "tdmob", "label": "raw", "n_cols": 2, "build_seconds": 0}

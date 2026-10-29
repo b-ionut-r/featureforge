@@ -46,7 +46,7 @@ import pandas as pd
 from featureforge.blocks.forecast_check import _CHECK_CHUNK_ROWS, forecast_check
 from featureforge.blocks.history import event_log_features, history_features, repeats
 from featureforge.blocks.lists import as_lists, json_fields, list_features, unit_ratio_features
-from featureforge.blocks.panel import panel_features
+from featureforge.blocks.panel import panel_features, panel_helps
 from featureforge.blocks.relational import (Child, RelatedTables, bag_features, asof_features, child_model_features, lookup_features,
                                             match_features, time_values)
 from featureforge.blocks.returns import return_features
@@ -793,6 +793,11 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
     if cfg.panel == "auto":
         t = time.time()
         Ptr, Pte, P = panel_features(Xtr, Xte)
+        if P is not None and Ptr.shape[1]:
+            keep, note = panel_helps(Xtr, Ptr, y, P["day"], cfg.task)
+            print(f"panel check: {note} -> {'kept' if keep else 'dropped'} ({time.time() - t:.0f}s)", flush=True)
+            if not keep:
+                P = None
         if P is not None:
             Xtr = pd.concat([Xtr.reset_index(drop=True), Ptr], axis=1)
             Xte = pd.concat([Xte.reset_index(drop=True), Pte], axis=1)
