@@ -367,16 +367,9 @@ def _is_code(s: pd.Series) -> bool:
     return len(u) >= 100 and (hi - lo + 1) >= 1.5 * len(u) and np.mean(u % 10 == 0) < 0.3
 
 
-def bag_features(ch: Child, k: int = 32, top_levels: int = 8, max_cols: int = 4) -> pd.DataFrame:
-    """Each parent's bag of a related table's codes, compressed: the parent x level count matrix of a categorical
-    with more levels than the aggregates keep one column for (Walmart's 68 departments: 8 kept) or of a code
-    column (barcodes, fineline numbers, which the aggregates otherwise average as if they were amounts), TF-IDF
-    weighted and reduced to ``k`` latent components (TalkingData mobile's apps: 16 components 2.315 log loss,
-    32 2.296, hand-built 40 2.294); what a basket holds, as the winners of shopping contests
-    pivoted it. Label-free; fitted over every parent's rows."""
-    from scipy import sparse
-    from sklearn.decomposition import TruncatedSVD
-    from sklearn.feature_extraction.text import TfidfTransformer
+def _bag_picks(ch: Child, top_levels: int = 8, max_cols: int = 4) -> list:
+    """(levels, column) of a child table's many-level categoricals, code columns and other tables' ids whose levels
+    recur across parents, most levels first."""
     df, key = ch.df, ch.key
     # Other tables' ids are candidates too (a purchase's product_id, a transaction's merchant_id): the recurrence
     # test below drops the ones each parent holds alone (Home Credit's SK_ID_PREV).
@@ -402,6 +395,21 @@ def bag_features(ch: Child, k: int = 32, top_levels: int = 8, max_cols: int = 4)
     # table's row id) says nothing a model could carry to a new parent.
     picks = [(nu, c) for nu, c in picks if df[[key, c]].drop_duplicates()[c].value_counts().median() >= 2]
     picks = sorted(picks, reverse=True)[:max_cols]
+    return picks
+
+
+def bag_features(ch: Child, k: int = 32, top_levels: int = 8, max_cols: int = 4) -> pd.DataFrame:
+    """Each parent's bag of a related table's codes, compressed: the parent x level count matrix of a categorical
+    with more levels than the aggregates keep one column for (Walmart's 68 departments: 8 kept) or of a code
+    column (barcodes, fineline numbers, which the aggregates otherwise average as if they were amounts), TF-IDF
+    weighted and reduced to ``k`` latent components (TalkingData mobile's apps: 16 components 2.315 log loss,
+    32 2.296, hand-built 40 2.294); what a basket holds, as the winners of shopping contests
+    pivoted it. Label-free; fitted over every parent's rows."""
+    from scipy import sparse
+    from sklearn.decomposition import TruncatedSVD
+    from sklearn.feature_extraction.text import TfidfTransformer
+    df, key = ch.df, ch.key
+    picks = _bag_picks(ch, top_levels, max_cols)
     if not picks:
         return pd.DataFrame(index=pd.Index([], name=key))
     rows, keys = pd.factorize(df[key])
@@ -820,3 +828,53 @@ def match_features(main: pd.DataFrame, key: str, ch: Child, cols: Sequence[str],
             out[k] = v
         del j
     return out
+
+
+def code_target_features(ch: Child, y: pd.Series, test_keys, task: str, folds: int = 5, smooth: float = 20.0,
+                         top_levels: int = 8, max_cols: int = 4, seed: int = 0) -> pd.DataFrame:
+    """What a parent's codes say about the target: for each many-level column of a child table (a card's merchants,
+    a phone's apps, an applicant's seller areas), every level's mean target over the training parents holding it,
+    smoothed toward the overall mean, then averaged (and its max and min, or per class) over each parent's rows.
+    Out of fold: a training parent's own rows are encoded from the other folds' parents only; test parents from all
+    training parents. ``y`` is indexed by training parent key."""
+    df, key = ch.df, ch.key
+    picks = _bag_picks(ch, top_levels, max_cols)
+    keys = pd.Index(pd.unique(np.concatenate([y.index.to_numpy(), np.asarray(test_keys)])))
+    if not picks:
+        return pd.DataFrame(index=keys)
+    if task == "multiclass":
+        Yc = pd.get_dummies(pd.Series(pd.factorize(y, sort=True)[0], index=y.index)).astype(float)
+    else:
+        Yc = pd.DataFrame({"y": y.to_numpy(dtype=float)}, index=y.index)
+    prior = Yc.mean()
+    fold_of = pd.Series(np.random.default_rng(seed).integers(0, folds, len(y)), index=y.index)
+    rk = df[key].to_numpy()
+    rf = fold_of.reindex(rk).to_numpy()          # NaN: a test parent's row
+    Yr = Yc.reindex(rk).to_numpy()               # rows of test parents: NaN
+    out = {}
+    for _, c in picks:
+        lv = pd.factorize(df[c])[0]
+        L = int(lv.max()) + 1
+        enc = np.full((len(df), Yc.shape[1]), np.nan)
+        lab = ~np.isnan(rf) & (lv >= 0)
+        tot_s = np.stack([np.bincount(lv[lab], weights=Yr[lab, j], minlength=L) for j in range(Yc.shape[1])], 1)
+        tot_n = np.bincount(lv[lab], minlength=L).astype(float)
+        for f in list(range(folds)) + [None]:
+            if f is None:
+                rows = np.isnan(rf) & (lv >= 0)
+                s_, n_ = tot_s, tot_n
+            else:
+                rows = (rf == f) & (lv >= 0)
+                inf = lab & (rf == f)
+                s_ = tot_s - np.stack([np.bincount(lv[inf], weights=Yr[inf, j], minlength=L) for j in range(Yc.shape[1])], 1)
+                n_ = tot_n - np.bincount(lv[inf], minlength=L)
+            m = (s_ + smooth * prior.to_numpy()) / (n_[:, None] + smooth)
+            enc[rows] = m[lv[rows]]
+        E = pd.DataFrame(enc, columns=[f"{c}_te_{j}" for j in Yc.columns]).assign(_k=rk)
+        g = E.groupby("_k", sort=False)
+        cols = [x for x in E.columns if x != "_k"]
+        out[c] = g[cols].mean() if task == "multiclass" else pd.concat(
+            [g[cols].mean(), g[cols].max().add_suffix("_max"), g[cols].min().add_suffix("_min")], axis=1)
+    res = pd.concat(out.values(), axis=1).reindex(keys)
+    res.columns = [_safe(f"{ch.name}:{x}") for x in res.columns]
+    return res.astype(np.float32)

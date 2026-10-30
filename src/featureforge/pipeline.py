@@ -47,7 +47,7 @@ from featureforge.blocks.forecast_check import _CHECK_CHUNK_ROWS, forecast_check
 from featureforge.blocks.history import recent_window_features, event_log_features, history_features, repeats
 from featureforge.blocks.lists import as_lists, json_fields, list_features, unit_ratio_features
 from featureforge.blocks.panel import panel_features, panel_helps
-from featureforge.blocks.relational import (Child, RelatedTables, bag_features, asof_features, child_model_features, lookup_features,
+from featureforge.blocks.relational import (Child, code_target_features, RelatedTables, bag_features, asof_features, child_model_features, lookup_features,
                                             match_features, time_values)
 from featureforge.blocks.returns import return_features
 from featureforge.forge import FeatureForge
@@ -765,6 +765,32 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
                 A.append(M.reindex(both_main[ch.key].to_numpy()).set_index(both_main.index))
                 label_cols += list(M.columns)
                 print(f"child model {ch.name}: {time.time() - t:.0f}s", flush=True)
+        # What each parent's codes say about the target (out of fold), kept when the quick check finds it adds 0.5%.
+        if cm_tables:
+            task_ = cfg.task or ("binary" if y.nunique() == 2 else "regression")
+            k_ = y.nunique() if task_ == "multiclass" else 1
+            cte = []
+            for ch in cm_tables:
+                if not stage_fits(f"table {ch.name}: code target maps", 16.0 * sizes[ch.name][0] * (k_ + 3)):
+                    continue
+                t = time.time()
+                yk = pd.Series(y.to_numpy(), index=tr[ch.key].to_numpy())
+                C = code_target_features(table(ch), yk, te[ch.key].to_numpy(), task_)
+                if C.shape[1]:
+                    cte.append(C.reindex(both_main[ch.key].to_numpy()).set_index(both_main.index))
+                    print(f"table {ch.name}: code target maps, {C.shape[1]} columns in {time.time() - t:.0f}s", flush=True)
+                del C
+            if cte:
+                pos = np.arange(len(tr))
+                if len(pos) > CM_CHECK_PARENTS:
+                    pos = np.sort(np.random.default_rng(0).choice(pos, CM_CHECK_PARENTS, replace=False))
+                if child_models_help(tr.drop(columns=[c for c in (cfg.id, cfg.target) if c and c in tr.columns]).iloc[pos],
+                                     [Fa.iloc[pos].reset_index(drop=True) for Fa in A],
+                                     [C.iloc[pos].reset_index(drop=True) for C in cte],
+                                     y.iloc[pos].reset_index(drop=True), cfg.task, what="code target maps", min_gain=0.005):
+                    A.extend(cte)
+                    label_cols += [c for C in cte for c in C.columns]
+            cte = []
         # One concat, not one per block (each pairwise concat copied every column so far), then each side as views
         # of its rows: a concat per side of row slices copied every block twice more, consolidated and joined
         # (Home Credit's 1,200 related columns: the pipeline's peak before the search).
