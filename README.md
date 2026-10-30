@@ -136,6 +136,12 @@ resemble them: a time-ordered split when the test lies in the future, and whole 
 the test holds new entities. Use `transform_train` on the training rows, never `transform`, because
 only `transform_train` keeps target encodings out of fold.
 
+Many rows per entity (plays per player, visits per patient) and a question about new entities: name
+the entity column, `FeatureForge(group_col="player_id")` or `build_features(..., forge_kw={"group_col":
+"player_id"})`. The gate, every CV fold, the screening split and out-of-fold encodings then hold out
+whole entities, and no time column is looked for. Keep that column in the table: a column passed as
+`id=` is dropped before the search, and a named `group_col` that is missing raises an error.
+
 ## How it works
 
 ```

@@ -64,9 +64,18 @@ def log_y(y: pd.Series) -> np.ndarray:
     return np.log(v) if np.nanmin(v) > 0 and np.nanmedian(v) < 1 else np.log1p(v)
 
 
-def parse_table(spec: str, main: pd.DataFrame, id_col: str | None) -> Child:
+def split_spec(spec: str) -> Tuple[str, List[str]]:
+    """``name=path[:key[:time]]`` as (name, [path, key, time...]). A Windows path's drive letter (``D:\\NFL\\x.parquet``,
+    ``C:/data/x.csv``) is part of the path, not a separator."""
     name, rest = spec.split("=", 1)
     parts = rest.split(":")
+    if len(parts) > 1 and len(parts[0]) == 1 and parts[0].isalpha() and parts[1][:1] in ("\\", "/"):
+        parts = [parts[0] + ":" + parts[1]] + parts[2:]
+    return name, parts
+
+
+def parse_table(spec: str, main: pd.DataFrame, id_col: str | None) -> Child:
+    name, parts = split_spec(spec)
     key = parts[1] if len(parts) > 1 and parts[1] else None
     need = aggregation_bytes(parts[0], key) if key else None
     big = need is not None and need > STREAM_SHARE * memory_bytes() and stream_rows(parts[0]) > STREAM_MIN_ROWS
@@ -377,9 +386,10 @@ def _load(src) -> pd.DataFrame:
     return read(str(src))
 
 
-def _table_specs(tables) -> List[str]:
+def _table_specs(tables, out_dir: Optional[str] = None) -> List[str]:
     """``tables`` as ``name=path[:key[:time]]`` strings: a list of such strings, or a mapping of name to a
-    path, a ``(path, key)`` / ``(path, key, time)`` tuple or a dict with ``path``, ``key`` and ``time``."""
+    path, a ``(path, key)`` / ``(path, key, time)`` tuple or a dict with ``path``, ``key`` and ``time``.
+    A DataFrame may stand in for a path: it is written to ``<out_dir>/_tables/<name>.parquet`` first."""
     if not tables:
         return []
     if not isinstance(tables, dict):
@@ -390,6 +400,12 @@ def _table_specs(tables) -> List[str]:
             v = (v["path"], v.get("key"), v.get("time"))
         elif not isinstance(v, (tuple, list)):
             v = (v,)
+        if isinstance(v[0], pd.DataFrame):
+            d = Path(out_dir or "features") / "_tables"
+            d.mkdir(parents=True, exist_ok=True)
+            path = d / f"{name}.parquet"
+            v[0].to_parquet(path, index=False)
+            v = (str(path), *v[1:])
         parts = [str(v[0])] + ["" if x is None else str(x) for x in v[1:]]
         while len(parts) > 1 and parts[-1] == "":
             parts.pop()
@@ -426,7 +442,7 @@ def build_features(train, test, target: str, *, id: Optional[str] = None, tables
 
     Returns the paths of ``train_features.parquet`` (with the target) and ``test_features.parquet``.
     """
-    return run(PipelineConfig(train=train, test=test, target=target, id=id, table=_table_specs(tables),
+    return run(PipelineConfig(train=train, test=test, target=target, id=id, table=_table_specs(tables, out_dir),
                               time=time_col, child_models=child_models, task=task, log_target=log_target,
                               budget=budget, top_related=top_related, out_dir=str(out_dir),
                               related_cache=related_cache, forge_kw=dict(forge_kw or {}), forecast=forecast,
@@ -501,7 +517,7 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
         print(f"related tables: {rel_tr.shape[1]} columns from {cache}", flush=True)
     elif cfg.table:
         children = [parse_table(s, tr, cfg.id) for s in cfg.table]
-        src = {ch.name: s.split("=", 1)[1].split(":")[0] for s, ch in zip(cfg.table, children)}
+        src = {ch.name: split_spec(s)[1][0] for s, ch in zip(cfg.table, children)}
         lookups = [ch for ch in children if "__lookup__" in ch.drop]
         children = [ch for ch in children if ch not in lookups]
         # One row per key: attributes of the main row (a tube's dimensions, its bill of
