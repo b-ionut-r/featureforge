@@ -127,7 +127,9 @@ class FeatureForge:
         repeating integer / categorical column with under 20% of the unlabeled
         rows' values seen in training. The gate, search folds, screening split
         and out-of-fold encodings then split whole groups, and target maps over
-        that column are not generated.
+        that column are not generated. A column named here must be in ``X``
+        (ValueError otherwise), and it switches off the automatic time column
+        (pass ``time_col`` explicitly to have both).
     time_cv : bool
         With a time column, search CV uses contiguous time blocks as folds and
         screening is measured on the latest rows, so features that only
@@ -2560,7 +2562,11 @@ class FeatureForge:
         new ones. Validation must then split whole groups, and target maps over the
         column cannot help."""
         if self.group_col != "auto":
-            return self.group_col if self.group_col in X.columns else None
+            if self.group_col is not None and self.group_col not in X.columns:
+                # Silently ungrouped folds would let one group's rows sit on both sides of every split.
+                raise ValueError(f"group_col={self.group_col!r} is not a column of X (in build_features, a column "
+                                 f"passed as id= is dropped before the search: keep it as a column instead)")
+            return self.group_col
         if U is None or len(U) < 50:
             return None
         Up = self._prep(U)
@@ -2668,6 +2674,12 @@ class FeatureForge:
     def _detect_time(self, X, U):
         if self.time_col != "auto":
             return self.time_col if self.time_col in X.columns else None
+        if self.group_col not in (None, "auto"):
+            # A group column named by the caller says the test holds new groups (players, patients): the gate and
+            # folds split those groups. A time column found in the data would silently replace that split, and rows
+            # of one group would sit on both sides of it.
+            self.time_like_ = []
+            return None
         if U is None or len(U) < 50:
             return None
         best, best_frac = None, 0.0
