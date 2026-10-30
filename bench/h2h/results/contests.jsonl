@@ -81,3 +81,6 @@
 {"loss": 0.1055027842989093, "auc": 0.8272282011473558, "ndcg38": 0.5030258179250103, "case": "expedia", "label": "v33", "n_cols": 84, "build_seconds": 955.4810812473297}
 {"loss": 0.6104684144898167, "acc": 0.7836425398484452, "case": "walmart", "label": "v32", "n_cols": 268, "build_seconds": 6629.024275779724}
 {"loss": 0.23204193084044497, "auc": 0.8020188936549979, "case": "hc", "label": "v32", "n_cols": 1355, "build_seconds": 4721.741991996765}
+{"loss": 8.667214711645503, "case": "optiver", "label": "v32", "n_cols": 201, "build_seconds": 2009.6733002662659}
+{"loss": 0.2538695426571895, "auc": 0.8291690353976986, "case": "instacart", "label": "v32", "n_cols": 347, "build_seconds": 2023.5509057044983}
+{"loss": 0.2538695426571895, "auc": 0.8291690353976986, "case": "instacart", "label": "v33", "n_cols": 347, "build_seconds": 1816.900250673294}
