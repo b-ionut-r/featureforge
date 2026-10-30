@@ -188,6 +188,38 @@ class GroupSeq(Spec):
         return out
 
 
+class GroupRel(Spec):
+    """Where a row stands among the other rows of its group in the same frame: its percentile rank,
+    gap to the group mean and z-score of a column, or the group's size. For groups the test holds
+    whole and new (searches, races, matches, a market's moment): the hotel's price against the other
+    hotels of the search, a player's kills against the match. Label-free; computed inside each group
+    of the frame it sees, as GroupSeq is."""
+
+    def __init__(self, key: str, col: Optional[str], kind: str):
+        super().__init__([key] + ([col] if col else []))
+        self.key, self.col, self.kind = key, col, kind
+        self.name = f"rel_{kind}__{col or 'rows'}__{key}"
+
+    @property
+    def novelty_parents(self):
+        return [self.col or self.key]
+
+    def transform(self, df, ctx):
+        g = pd.factorize(df[self.key].to_numpy(), use_na_sentinel=False)[0]
+        if self.kind == "size":
+            return np.bincount(g)[g].astype(float)
+        x = pd.Series(df[self.col].to_numpy(dtype=float))
+        G = x.groupby(g, sort=False)
+        if self.kind == "prank":
+            return G.rank(pct=True).to_numpy(dtype=float)
+        m = G.transform("mean").to_numpy(dtype=float)
+        if self.kind == "dev":
+            return x.to_numpy() - m
+        sd = G.transform("std").to_numpy(dtype=float)
+        with np.errstate(all="ignore"):
+            return (x.to_numpy() - m) / np.where(sd > 0, sd, np.nan)
+
+
 class LaggedTargetMean(Spec):
     """Mean target of an entity's labelled rows in a trailing window that ends one
     test horizon before the row: ``[t - lag - window, t - lag)``. Training and test

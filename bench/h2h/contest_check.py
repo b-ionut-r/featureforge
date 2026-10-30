@@ -256,6 +256,27 @@ def split(case):
         hold.drop(columns=["target"]).to_parquet(d / "test.parquet")
         pd.read_csv(src / "plasticc_train_lightcurves.csv").to_parquet(d / "lightcurves.parquet")
         meta = dict(task="multiclass", id="object_id", tables={"lc": str(d / "lightcurves.parquet") + ":object_id:mjd"})
+    elif case == "expedia":
+        # Personalize Expedia Hotel Searches (ICDM 2013, $25k): each search's hotels, ranked by NDCG@38 with
+        # relevance 5 booked / 1 clicked. One in twenty searches of the training file (srch_id % 20 == 0, from the
+        # mirror); 20% of those searches held out whole (seed 0), as the test held new searches. The judge fits
+        # booking; position, clicks and booking value exist only for training rows and are left out.
+        src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c")) / "expedia"
+        df = pd.read_parquet(src / "train_s20.parquet")
+        df["date_time"] = pd.to_datetime(df.date_time)
+        rel = np.where(df.booking_bool == 1, 5, np.where(df.click_bool == 1, 1, 0))
+        df = df.drop(columns=["position", "click_bool", "gross_bookings_usd"])
+        df.insert(0, "row_id", np.arange(len(df)))
+        q = df.srch_id.drop_duplicates()
+        m = df.srch_id.isin(q.sample(frac=0.2, random_state=0)).to_numpy()
+        fit, hold = df[~m], df[m]
+        np.save(d / "y_test.npy", hold.booking_bool.to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        np.save(d / "q_test.npy", hold.srch_id.to_numpy())
+        np.save(d / "rel_test.npy", rel[m])
+        fit.rename(columns={"booking_bool": Y}).to_parquet(d / "train.parquet")
+        hold.drop(columns=["booking_bool"]).to_parquet(d / "test.parquet")
+        meta = dict(task="binary", id="row_id", tables={})
     elif case in ("homesite", "walmart", "optiver", "enefit"):
         # Paid contests never run before (Kaggle dataset mirrors under FRESH_C), each split like its test.
         src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c"))
@@ -362,6 +383,18 @@ def judge_cell(case, label):
     if (d / "w_test.npy").exists() and preds:   # the contest's weighted zero-mean R2
         w = np.load(d / "w_test.npy")
         r["wr2"] = float(1 - np.sum(w * (y - preds[0]) ** 2) / np.sum(w * y ** 2))
+    if (d / "q_test.npy").exists() and preds:   # the contest's NDCG@38 over each held-out search
+        q, rel, p = np.load(d / "q_test.npy"), np.load(d / "rel_test.npy"), preds[0]
+        o = np.lexsort((-p, q))
+        qs, rs = q[o], rel[o].astype(float)
+        start = np.r_[True, qs[1:] != qs[:-1]]
+        pos = np.arange(len(qs)) - np.maximum.accumulate(np.where(start, np.arange(len(qs)), 0))
+        disc = np.where(pos < 38, 1.0 / np.log2(pos + 2), 0.0)
+        dcg = pd.Series((2 ** rs - 1) * disc).groupby(qs).sum()
+        oi = np.lexsort((-rel[o], qs))
+        idcg = pd.Series((2 ** rel[o][oi].astype(float) - 1) * disc).groupby(qs).sum()
+        ok = idcg > 0
+        r["ndcg38"] = float((dcg[ok] / idcg[ok]).sum() / len(idcg))
     secs = json.loads((d / label / "seconds.json").read_text())["seconds"] if label != "raw" else 0
     r.update(case=case, label=label, n_cols=A.shape[1], build_seconds=secs)
     print(json.dumps(r))

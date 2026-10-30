@@ -55,7 +55,7 @@ from featureforge.specs.base import Spec, _release
 from featureforge.specs.dates import DatePart, EventRecency, _DATE_PARTS, _is_date_like, _to_days
 from featureforge.specs.encoding import (BinnedPairTE, Count, FamilyCount, KeyBinTE, MixedCount, MixedTE, SlotBag,
                                          SlotTE, TargetEnc)
-from featureforge.specs.groups import EntityLag, GroupSeq, GroupStat
+from featureforge.specs.groups import EntityLag, GroupRel, GroupSeq, GroupStat
 from featureforge.specs.neighbors import KNNClassDist, KNNTarget, LinearOOF, Projection, _one_blas_thread
 from featureforge.specs.numeric import Arith, Digits, GeoPair, LinResid, Rotate, RowStat, StrNum
 from featureforge.specs.text import CrossLinearOOF, TextLinearOOF, TextSVD, TextStats, _is_text, _text_nnz
@@ -589,6 +589,16 @@ class FeatureForge:
             for c in varying[:4]:
                 for kind in ("lag1", "lag2", "lag3", "lead1", "lead2", "diff1", "diff2", "cumsum", "area", "cummax"):
                     add(GroupSeq(g, seq, c, kind))
+        q = getattr(self, "query_col_", None)
+        if round_idx == 0 and q is not None and q in W.columns:
+            # Test rows come as whole new groups: each row against the rest of its group.
+            add(GroupRel(q, None, "size"))
+            gq = pd.factorize(W[q].to_numpy(), use_na_sentinel=False)[0]
+            varying = [c for c in num_rank[:16] if c != q and c in self.base_cols_ and c not in time_cols
+                       and pd.Series(W[c].to_numpy(dtype=float)).groupby(gq).nunique().mean() > 1.5]
+            for c in varying[:6]:
+                for kind in ("prank", "dev", "z"):
+                    add(GroupRel(q, c, kind))
         if round_idx == 0:
             raw_num = [c for c in self.base_cols_ if c not in self.cat_cols_]
             for stem, cols in column_families(raw_num).items():
@@ -1533,6 +1543,22 @@ class FeatureForge:
         self.group_col_ = None if self.time_col_ is not None else self._detect_group(X, X_unlabeled)
         if self.group_col_ is not None:
             self._log(f"test rows are new {self.group_col_} groups: grouped gate, folds and screening")
+        # Groups the test holds whole and new, also under a time split (a day's stocks, a search's
+        # hotels): features only, each row against the rest of its group.
+        # Under a time split only groups that sit at one moment (a search, a race): a day of a
+        # market spans many moments that an API sends one batch at a time (the panel block reads those).
+        self.query_col_ = self.group_col_
+        if self.query_col_ is None and self.time_col_ not in (None, ROW_TIME):
+            q = self._detect_group(X, X_unlabeled)
+            if q is not None and q != self.time_col_ and (
+                    X.groupby(q, sort=False)[self.time_col_].nunique().median() <= 1):
+                self.query_col_ = q
+        if self.query_col_ is not None:
+            sz = X[self.query_col_].value_counts(dropna=False)
+            if not 2 <= sz.median() <= 5000:
+                self.query_col_ = None
+        if self.query_col_ is not None:
+            self._log(f"test rows come as whole {self.query_col_} groups: rows against their group")
         self.seq_order_ = None if self.group_col_ is None else self._detect_order(X, self.group_col_)
         if self.seq_order_ is not None:
             self._log(f"{self.group_col_} groups are sequences ordered by {self.seq_order_}: lags, leads, running sums")

@@ -67,14 +67,14 @@ def judge(Xtr, ytr, Xte, yte, task, seed, threads=4, preds=None):
     for s in range(3):
         ds = full if lean else lgb.Dataset(Xtr, ytr)
         p += lgb.train(dict(P, seed=s), ds, int(b.best_iteration * 1.1) + 1).predict(Xte) / 3
+    if preds is not None and task != "multiclass":
+        preds.append(p)
     if task == "multiclass":
         pp = np.clip(p, 1e-15, 1)
         pp /= pp.sum(1, keepdims=True)
         return dict(loss=float(log_loss(yte, pp, labels=np.arange(k))), acc=float(np.mean(p.argmax(1) == yte)))
     if task == "binary":
         return dict(loss=float(log_loss(yte, np.clip(p, 1e-6, 1 - 1e-6))), auc=float(roc_auc_score(yte, p)))
-    if preds is not None:
-        preds.append(p)
     return dict(loss=float(mean_squared_error(yte, p) ** 0.5))
 
 
