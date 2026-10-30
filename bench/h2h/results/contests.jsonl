@@ -71,3 +71,11 @@
 {"loss": 2.2710350001475774, "acc": 0.19472168263112064, "case": "tdmob", "label": "q32", "n_cols": 128, "build_seconds": 1238.5736103057861}
 {"loss": 0.6261608642079266, "acc": 0.79171974522293, "case": "plasticc", "label": "q32", "n_cols": 132, "build_seconds": 997.0172369480133}
 {"loss": 3.731170551192938, "case": "elo", "label": "v32", "n_cols": 86, "build_seconds": 740.6260318756104}
+{"loss": 390.6686280962466, "case": "enefit", "label": "v32", "n_cols": 62, "build_seconds": 93.81229257583618}
+{"loss": 0.7349431097589346, "wr2": 0.004099648030388203, "case": "jane", "label": "v32", "n_cols": 92, "build_seconds": 483.8867721557617}
+{"loss": 2.2710350001475774, "acc": 0.19472168263112064, "case": "tdmob", "label": "v32", "n_cols": 128, "build_seconds": 2825.1004672050476}
+{"loss": 0.5743211924732461, "acc": 0.8089171974522293, "case": "plasticc", "label": "v32", "n_cols": 892, "build_seconds": 2453.64230966568}
+{"loss": 0.16882968910815624, "auc": 0.9652750983171978, "case": "homesite", "label": "v32", "n_cols": 357, "build_seconds": 1393.6173264980316}
+{"loss": 0.11307597408691508, "auc": 0.7714671281903821, "ndcg38": 0.4822690281125078, "case": "expedia", "label": "raw", "n_cols": 50, "build_seconds": 0}
+{"loss": 0.10633819276979506, "auc": 0.8225108896581587, "ndcg38": 0.4949925080775463, "case": "expedia", "label": "v32", "n_cols": 78, "build_seconds": 726.125007390976}
+{"loss": 0.1055027842989093, "auc": 0.8272282011473558, "ndcg38": 0.5030258179250103, "case": "expedia", "label": "v33", "n_cols": 84, "build_seconds": 955.4810812473297}
