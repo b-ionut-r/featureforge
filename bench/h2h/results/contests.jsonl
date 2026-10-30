@@ -70,3 +70,4 @@
 {"loss": 3.731170551192938, "case": "elo", "label": "q32", "n_cols": 86, "build_seconds": 504.355943441391}
 {"loss": 2.2710350001475774, "acc": 0.19472168263112064, "case": "tdmob", "label": "q32", "n_cols": 128, "build_seconds": 1238.5736103057861}
 {"loss": 0.6261608642079266, "acc": 0.79171974522293, "case": "plasticc", "label": "q32", "n_cols": 132, "build_seconds": 997.0172369480133}
+{"loss": 3.731170551192938, "case": "elo", "label": "v32", "n_cols": 86, "build_seconds": 740.6260318756104}
