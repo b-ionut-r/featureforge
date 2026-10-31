@@ -34,7 +34,7 @@ COMP_PY = os.environ.get("H2H_COMP_PY", "/home/user/venv_comp/bin/python")  # Op
 PY = {"featureforge": sys.executable, "llm": sys.executable}
 
 
-def judge(Xtr, ytr, Xte, yte, task, seed, threads=4):
+def judge(Xtr, ytr, Xte, yte, task, seed, threads=4, preds=None):
     """The pinned judge: LightGBM, early stopping on a random 15% of training rows, then three seeds
     refit on all training rows at 1.1x the best iteration, predictions averaged."""
     lean = bool(os.environ.get("H2H_JUDGE_F32"))  # big cases: no copies, one binned dataset shared by every fit
@@ -54,6 +54,8 @@ def judge(Xtr, ytr, Xte, yte, task, seed, threads=4):
              max_cat_to_onehot=8, cat_smooth=50, **({"num_class": k} if k else {}))
     perm = np.random.default_rng(seed + 1).permutation(n)
     fit, va = np.sort(perm[: int(0.85 * n)]), np.sort(perm[int(0.85 * n):])
+    if os.environ.get("H2H_JUDGE_ES_LAST"):  # time-ordered market cases: stop on the latest 15% of rows (a random
+        fit, va = np.arange(int(0.85 * n)), np.arange(int(0.85 * n), n)   # 15% sits beside its own moments)
     if lean:
         full = lgb.Dataset(Xtr, ytr, params=dict(P), free_raw_data=True).construct()
         b = lgb.train(dict(P, seed=0), full.subset(fit), 5000, valid_sets=[full.subset(va)],
@@ -65,6 +67,8 @@ def judge(Xtr, ytr, Xte, yte, task, seed, threads=4):
     for s in range(3):
         ds = full if lean else lgb.Dataset(Xtr, ytr)
         p += lgb.train(dict(P, seed=s), ds, int(b.best_iteration * 1.1) + 1).predict(Xte) / 3
+    if preds is not None and task != "multiclass":
+        preds.append(p)
     if task == "multiclass":
         pp = np.clip(p, 1e-15, 1)
         pp /= pp.sum(1, keepdims=True)

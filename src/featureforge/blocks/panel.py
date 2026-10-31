@@ -90,8 +90,8 @@ def find_panel(X: pd.DataFrame, U: Optional[pd.DataFrame] = None, sample: int = 
 UNIT_WORDS = (("price", "px", "wap"), ("size", "qty", "quantity", "volume", "amount"))
 
 
-def panel_features(Xtr: pd.DataFrame, Xte: pd.DataFrame, lags: Tuple[int, ...] = (1, 2, 3), max_cols: int = 12
-                   ) -> Tuple[pd.DataFrame, pd.DataFrame, Optional[dict]]:
+def panel_features(Xtr: pd.DataFrame, Xte: pd.DataFrame, lags: Tuple[int, ...] = (1, 2, 3), max_cols: int = 12,
+                   y=None) -> Tuple[pd.DataFrame, pd.DataFrame, Optional[dict]]:
     """Imbalances between same-unit columns (named prices, named sizes) and their rank within the moment; per
     numeric column: value minus the moment's mean over entities, rank within the moment, change over the
     entity's last ``lags`` steps of the day, and that 1-step change against the moment's mean change. Train and
@@ -103,7 +103,15 @@ def panel_features(Xtr: pd.DataFrame, Xte: pd.DataFrame, lags: Tuple[int, ...] =
     e, m, d = P["entity"], P["moment"], P["day"]
     keys = {e, d, *m}
     num = [c for c in Xtr.columns if c not in keys and pd.api.types.is_numeric_dtype(Xtr[c])
-           and not pd.api.types.is_bool_dtype(Xtr[c]) and Xtr[c].iloc[:200_000].nunique() > 20][:max_cols]
+           and not pd.api.types.is_bool_dtype(Xtr[c]) and Xtr[c].iloc[:200_000].nunique() > 20]
+    if y is not None and len(num) > max_cols:
+        # More numeric columns than the block takes (Jane Street's 79 anonymous features): the ones whose rank
+        # follows the target most closely on training rows, not the first ones in the file.
+        yr = pd.Series(pd.factorize(pd.Series(y), sort=True)[0] if not pd.api.types.is_numeric_dtype(pd.Series(y))
+                       else np.asarray(y, dtype=float)).iloc[:500_000].rank()
+        score = {c: abs(Xtr[c].iloc[:500_000].reset_index(drop=True).rank().corr(yr)) for c in num}
+        num = sorted(num, key=lambda c: -np.nan_to_num(score[c]))
+    num = num[:max_cols]
     if not num:
         return pd.DataFrame(index=range(n)), pd.DataFrame(index=range(len(Xte))), None
 
@@ -160,3 +168,52 @@ def panel_features(Xtr: pd.DataFrame, Xte: pd.DataFrame, lags: Tuple[int, ...] =
         return F.astype(np.float32)
 
     return build(Xtr), build(Xte), P
+
+
+def panel_helps(Xtr: pd.DataFrame, Ptr: pd.DataFrame, y, day: str, task: Optional[str], windows: int = 3,
+                share: float = 0.3, max_fit: int = 300_000, max_valid: int = 100_000, seed: int = 0) -> Tuple[bool, str]:
+    """Keep the panel block only when it helps on later days, window after window: the last ``share`` of days
+    split into ``windows`` windows, each predicted by a quick LightGBM fitted on the days before it, with and
+    without the block. Kept when the mean gain is positive and the block wins in most windows (Jane Street's 72
+    panel columns, never checked, took the weighted R2 from 0.0072 to 0.0065)."""
+    import lightgbm as lgb
+    from featureforge.blocks.forecast_check import _check_matrix
+    days = np.sort(pd.unique(Xtr[day].dropna()))
+    if len(days) < 3 * windows:
+        return True, "too few days to check"
+    cut = days[int(len(days) * (1 - share)):]
+    edges = [w[0] for w in np.array_split(cut, windows) if len(w)]
+    yv = np.asarray(y, dtype=float)
+    task = task or ("binary" if len(np.unique(yv[~np.isnan(yv)])) == 2 else "regression")
+    if task == "multiclass":
+        yv = pd.factorize(pd.Series(y), sort=True)[0].astype(float)
+    obj = {"binary": "binary", "multiclass": "multiclass"}.get(task, "regression")
+    metric = {"binary": "binary_logloss", "multiclass": "multi_logloss"}.get(task, "l2")
+    P = dict(objective=obj, learning_rate=0.05, num_leaves=31, min_child_samples=100, feature_fraction=0.5,
+             verbose=-1, num_threads=4, seed=seed, deterministic=True, force_col_wise=True)
+    if task == "multiclass":
+        P["num_class"] = int(np.nanmax(yv)) + 1
+    d = Xtr[day].to_numpy()
+    rng = np.random.default_rng(seed)
+    gains = []
+    for i, lo in enumerate(edges):
+        hi = edges[i + 1] if i + 1 < len(edges) else None
+        fit = np.flatnonzero(d < lo)
+        val = np.flatnonzero((d >= lo) & ((d < hi) if hi is not None else True))
+        fit = np.sort(rng.choice(fit, max_fit, replace=False)) if len(fit) > max_fit else fit
+        val = np.sort(rng.choice(val, max_valid, replace=False)) if len(val) > max_valid else val
+        ok_f, ok_v = fit[~np.isnan(yv[fit])], val[~np.isnan(yv[val])]
+        if len(ok_f) < 1000 or len(ok_v) < 200:
+            continue
+        Mb = _check_matrix([Xtr], [(0, ok_f), (0, ok_v)])
+        Mp = _check_matrix([Ptr], [(0, ok_f), (0, ok_v)])
+        loss = []
+        for Mf, Mv in ((Mb[0], Mb[1]), (np.hstack([Mb[0], Mp[0]]), np.hstack([Mb[1], Mp[1]]))):
+            b = lgb.train(P, lgb.Dataset(Mf, yv[ok_f]), 1000, valid_sets=[lgb.Dataset(Mv, yv[ok_v])],
+                          callbacks=[lgb.early_stopping(50, verbose=False)])
+            loss.append(b.best_score["valid_0"][metric])
+        gains.append((loss[0] - loss[1]) / loss[0])
+    if not gains:
+        return True, "no window to check"
+    keep = float(np.mean(gains)) > 0 and sum(g > 0 for g in gains) > len(gains) / 2
+    return keep, f"{100 * np.mean(gains):+.2f}% loss on later days ({', '.join(f'{100 * g:+.2f}%' for g in gains)})"

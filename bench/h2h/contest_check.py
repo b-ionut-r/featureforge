@@ -169,6 +169,114 @@ def split(case):
         meta = dict(task="binary", id="up", tables={"up_hist": str(d / "up_hist.parquet") + ":up:order_number",
                                                      "user_items": str(d / "user_items.parquet") + ":user_id:order_number",
                                                      "prod_hist": str(d / "prod_hist.parquet") + ":product_id"})
+    elif case == "tdmob":
+        # TalkingData Mobile User Demographics ($25k): a phone's gender-age group (12 classes) from its brand, model and
+        # apps. 20% of training devices held out (seed 0), the real test devices unlabeled too. Related tables, keyed by
+        # device: its events (time, place), its apps (events and active events per app, from the event log) and its
+        # apps' labels.
+        src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c")) / "tdmob"
+        tr = pd.read_csv(src / "gender_age_train.csv")[["device_id", "group"]]
+        te_real = pd.read_csv(src / "gender_age_test.csv")
+        ph = pd.read_csv(src / "phone_brand_device_model.csv").drop_duplicates("device_id")
+        tr["group"] = pd.factorize(tr.group, sort=True)[0]
+        hold_ids = tr.device_id.sample(frac=0.2, random_state=0)
+        m = tr.device_id.isin(hold_ids)
+        fit, hold = tr[~m].merge(ph, on="device_id", how="left"), tr[m].merge(ph, on="device_id", how="left")
+        np.save(d / "y_test.npy", hold.group.to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        fit.rename(columns={"group": Y}).to_parquet(d / "train.parquet")
+        pd.concat([hold.drop(columns=["group"]), te_real.merge(ph, on="device_id", how="left")],
+                  ignore_index=True).to_parquet(d / "test.parquet")
+        ev = pd.read_csv(src / "events.csv", parse_dates=["timestamp"])
+        ev[["device_id", "timestamp", "longitude", "latitude"]].to_parquet(d / "events.parquet")
+        ae = pd.read_csv(src / "app_events.csv", usecols=["event_id", "app_id", "is_active"])
+        ae = ae.merge(ev[["event_id", "device_id"]], on="event_id")
+        da = ae.groupby(["device_id", "app_id"], as_index=False).agg(n_events=("event_id", "size"), n_active=("is_active", "sum"))
+        del ae
+        da.to_parquet(d / "device_apps.parquet")
+        al = pd.read_csv(src / "app_labels.csv").drop_duplicates()
+        dl = da[["device_id", "app_id"]].merge(al, on="app_id")[["device_id", "label_id"]]
+        dl.groupby(["device_id", "label_id"], as_index=False).size().rename(columns={"size": "n_apps"}).to_parquet(d / "device_labels.parquet")
+        meta = dict(task="multiclass", id="device_id", tables={"events": str(d / "events.parquet") + ":device_id:timestamp",
+                                                                "apps": str(d / "device_apps.parquet") + ":device_id",
+                                                                "labels": str(d / "device_labels.parquet") + ":device_id"})
+    elif case == "jane":
+        # Jane Street Real-Time Market Data ($120k): responder_6 of 39 symbols, from the mirror's last partition: its
+        # last 59 days, every 4th time step (each step's cross-section whole). The latest 12 days held out. Each row
+        # carries the previous day's responders at its step and symbol, as the contest serves them.
+        src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c")) / "jane"
+        df = pd.read_parquet(src / "part-9.parquet", filters=[("date_id", ">=", 1639)])
+        df = df[df.time_id % 4 == 0].reset_index(drop=True)
+        resp = [f"responder_{i}" for i in range(9)]
+        lag = df[["date_id", "time_id", "symbol_id"] + resp].copy()
+        lag["date_id"] += 1
+        df = df.merge(lag.rename(columns={r: f"{r}_lag_1" for r in resp}), on=["date_id", "time_id", "symbol_id"], how="left")
+        df = df[df.date_id >= 1640].sort_values(["date_id", "time_id", "symbol_id"]).reset_index(drop=True)
+        df = df.drop(columns=[r for r in resp if r != "responder_6"])
+        df.insert(0, "row_id", np.arange(len(df)))
+        cut = sorted(df.date_id.unique())[-12]
+        fit, hold = df[df.date_id < cut], df[df.date_id >= cut]
+        np.save(d / "y_test.npy", hold.responder_6.to_numpy())
+        np.save(d / "w_test.npy", hold.weight.to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        fit.rename(columns={"responder_6": Y}).to_parquet(d / "train.parquet")
+        hold.drop(columns=["responder_6"]).to_parquet(d / "test.parquet")
+        meta = dict(task="regression", id="row_id", tables={})
+    elif case == "elo":
+        # Elo Merchant Category Recommendation ($50k): a card's loyalty score from its new-merchant purchases (the
+        # mirror's 190 MB table; the 2.8 GB history left out). 20% of training cards held out (seed 0), the real
+        # test cards unlabeled too.
+        src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c")) / "elo"
+        tr, te_real = pd.read_csv(src / "train.csv"), pd.read_csv(src / "test.csv")
+        hold_ids = tr.card_id.sample(frac=0.2, random_state=0)
+        m = tr.card_id.isin(hold_ids)
+        fit, hold = tr[~m], tr[m]
+        np.save(d / "y_test.npy", hold.target.to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        fit.rename(columns={"target": Y}).to_parquet(d / "train.parquet")
+        pd.concat([hold.drop(columns=["target"]), te_real], ignore_index=True).to_parquet(d / "test.parquet")
+        nm = pd.read_csv(src / "new_merchant_transactions.csv", parse_dates=["purchase_date"])
+        nm.to_parquet(d / "new_merchant.parquet")
+        meta = dict(task="regression", id="card_id", tables={"new": str(d / "new_merchant.parquet") + ":card_id:purchase_date"})
+    elif case == "plasticc":
+        # PLAsTiCC Astronomical Classification ($25k): an object's class (14) from its metadata and its light curve
+        # (flux per passband over time) as a related table. The training objects only, with the contest's columns
+        # (the unblinded release's true_* and simulation columns left out); 20% held out, stratified (seed 0).
+        src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c")) / "plasticc"
+        md = pd.read_csv(src / "plasticc_train_metadata.csv", skipinitialspace=True)
+        md = md[["object_id", "ra", "decl", "ddf_bool", "hostgal_specz", "hostgal_photoz", "hostgal_photoz_err",
+                 "distmod", "mwebv", "target"]]
+        md["target"] = pd.factorize(md.target, sort=True)[0]
+        from sklearn.model_selection import train_test_split
+        a, b = train_test_split(np.arange(len(md)), test_size=0.2, random_state=0, stratify=md.target)
+        fit, hold = md.iloc[np.sort(a)], md.iloc[np.sort(b)]
+        np.save(d / "y_test.npy", hold.target.to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        fit.rename(columns={"target": Y}).to_parquet(d / "train.parquet")
+        hold.drop(columns=["target"]).to_parquet(d / "test.parquet")
+        pd.read_csv(src / "plasticc_train_lightcurves.csv").to_parquet(d / "lightcurves.parquet")
+        meta = dict(task="multiclass", id="object_id", tables={"lc": str(d / "lightcurves.parquet") + ":object_id:mjd"})
+    elif case == "expedia":
+        # Personalize Expedia Hotel Searches (ICDM 2013, $25k): each search's hotels, ranked by NDCG@38 with
+        # relevance 5 booked / 1 clicked. One in twenty searches of the training file (srch_id % 20 == 0, from the
+        # mirror); 20% of those searches held out whole (seed 0), as the test held new searches. The judge fits
+        # booking; position, clicks and booking value exist only for training rows and are left out.
+        src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c")) / "expedia"
+        df = pd.read_parquet(src / "train_s20.parquet")
+        df["date_time"] = pd.to_datetime(df.date_time)
+        rel = np.where(df.booking_bool == 1, 5, np.where(df.click_bool == 1, 1, 0))
+        df = df.drop(columns=["position", "click_bool", "gross_bookings_usd"])
+        df.insert(0, "row_id", np.arange(len(df)))
+        q = df.srch_id.drop_duplicates()
+        m = df.srch_id.isin(q.sample(frac=0.2, random_state=0)).to_numpy()
+        fit, hold = df[~m], df[m]
+        np.save(d / "y_test.npy", hold.booking_bool.to_numpy())
+        np.save(d / "n_hold.npy", np.array([len(hold)]))
+        np.save(d / "q_test.npy", hold.srch_id.to_numpy())
+        np.save(d / "rel_test.npy", rel[m])
+        fit.rename(columns={"booking_bool": Y}).to_parquet(d / "train.parquet")
+        hold.drop(columns=["booking_bool"]).to_parquet(d / "test.parquet")
+        meta = dict(task="binary", id="row_id", tables={})
     elif case in ("homesite", "walmart", "optiver", "enefit"):
         # Paid contests never run before (Kaggle dataset mirrors under FRESH_C), each split like its test.
         src = Path(os.environ.get("FRESH_C", Path.home() / "data" / "fresh_c"))
@@ -270,7 +378,23 @@ def judge_cell(case, label):
             for c in X.columns:
                 if pd.api.types.is_numeric_dtype(X[c]) and not pd.api.types.is_bool_dtype(X[c]) and X[c].dtype != np.float32:
                     X[c] = X[c].astype(np.float32)
-    r = judge(A, yt, B[A.columns], y, meta["task"], 0)
+    preds = []
+    r = judge(A, yt, B[A.columns], y, meta["task"], 0, preds=preds)
+    if (d / "w_test.npy").exists() and preds:   # the contest's weighted zero-mean R2
+        w = np.load(d / "w_test.npy")
+        r["wr2"] = float(1 - np.sum(w * (y - preds[0]) ** 2) / np.sum(w * y ** 2))
+    if (d / "q_test.npy").exists() and preds:   # the contest's NDCG@38 over each held-out search
+        q, rel, p = np.load(d / "q_test.npy"), np.load(d / "rel_test.npy"), preds[0]
+        o = np.lexsort((-p, q))
+        qs, rs = q[o], rel[o].astype(float)
+        start = np.r_[True, qs[1:] != qs[:-1]]
+        pos = np.arange(len(qs)) - np.maximum.accumulate(np.where(start, np.arange(len(qs)), 0))
+        disc = np.where(pos < 38, 1.0 / np.log2(pos + 2), 0.0)
+        dcg = pd.Series((2 ** rs - 1) * disc).groupby(qs).sum()
+        oi = np.lexsort((-rel[o], qs))
+        idcg = pd.Series((2 ** rel[o][oi].astype(float) - 1) * disc).groupby(qs).sum()
+        ok = idcg > 0
+        r["ndcg38"] = float((dcg[ok] / idcg[ok]).sum() / len(idcg))
     secs = json.loads((d / label / "seconds.json").read_text())["seconds"] if label != "raw" else 0
     r.update(case=case, label=label, n_cols=A.shape[1], build_seconds=secs)
     print(json.dumps(r))

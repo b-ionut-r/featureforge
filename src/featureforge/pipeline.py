@@ -44,10 +44,10 @@ import numpy as np
 import pandas as pd
 
 from featureforge.blocks.forecast_check import _CHECK_CHUNK_ROWS, forecast_check
-from featureforge.blocks.history import event_log_features, history_features, repeats
+from featureforge.blocks.history import recent_window_features, event_log_features, history_features, repeats
 from featureforge.blocks.lists import as_lists, json_fields, list_features, unit_ratio_features
-from featureforge.blocks.panel import panel_features
-from featureforge.blocks.relational import (Child, RelatedTables, bag_features, asof_features, child_model_features, lookup_features,
+from featureforge.blocks.panel import panel_features, panel_helps
+from featureforge.blocks.relational import (Child, code_target_features, RelatedTables, bag_features, asof_features, child_model_features, lookup_features,
                                             match_features, time_values)
 from featureforge.blocks.returns import return_features
 from featureforge.forge import FeatureForge
@@ -295,7 +295,7 @@ def child_model_bytes(size, rows=None) -> float:
     return max(n * (3 * b + 4 * 48), n * (b + w) + 2 * min(n, 3_000_000) * w)
 
 
-def child_models_help(main, rel, cm, y, task, max_rows=60_000, seed=0, what="child models"):
+def child_models_help(main, rel, cm, y, task, max_rows=60_000, seed=0, what="child models", min_gain=0.0):
     """Keep a block (child-row models, code bags) only when it adds to the aggregates: a quick 3-fold LightGBM on
     training rows with and without it (child models: Home Credit +0.28 AUC points; on Elo they cost hours and
     lowered the score, the card-level label being noise for each transaction. Code bags: Walmart's trip types
@@ -319,7 +319,8 @@ def child_models_help(main, rel, cm, y, task, max_rows=60_000, seed=0, what="chi
         rows = np.sort(np.random.default_rng(seed).choice(rows, max_rows, replace=False))
     obj = {"binary": "binary", "multiclass": "multiclass"}.get(task, "regression")
     metric = {"binary": "binary_logloss", "multiclass": "multi_logloss"}.get(task, "l2")
-    P = dict(objective=obj, learning_rate=0.1, num_leaves=31,
+    # (multiclass at 0.1: one of Walmart's 38-class folds came out 32% worse with the bags, the other two near even)
+    P = dict(objective=obj, learning_rate=0.05 if task == "multiclass" else 0.1, num_leaves=31,
              min_child_samples=50, feature_fraction=0.5, verbose=-1, num_threads=4, seed=seed,
              deterministic=True, force_col_wise=True)  # histogram mode not chosen by timing (load)
     if task == "multiclass":
@@ -335,7 +336,7 @@ def child_models_help(main, rel, cm, y, task, max_rows=60_000, seed=0, what="chi
                           callbacks=[lgb.early_stopping(50, verbose=False)])
             loss.append(b.best_score["valid_0"][metric])
         gains.append((loss[0] - loss[1]) / loss[0])
-    keep = float(np.mean(gains)) > 0 and sum(g > 0 for g in gains) >= 2
+    keep = float(np.mean(gains)) > min_gain and sum(g > 0 for g in gains) >= 2
     print(f"{what}: {100 * np.mean(gains):+.2f}% CV loss over the aggregates "
           f"({', '.join(f'{100 * g:+.2f}%' for g in gains)}) -> {'kept' if keep else 'dropped'} "
           f"in {time.time() - t:.0f}s", flush=True)
@@ -521,6 +522,7 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
         F = pd.DataFrame()
         A = []
         bags = []   # code bags, kept below when they add to the aggregates
+        recent = []   # recent-window summaries, likewise
         for ch in children:
             if ch.name in asof:
                 print(f"table {ch.name}: as of {asof[ch.name]} per main row", flush=True)
@@ -650,6 +652,12 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
                 print(f"table {ch.name}: latest-state history, {Hk.shape[1]} columns in {time.time() - t:.0f}s", flush=True)
                 A.insert(1, Hk)
                 del Hk
+                t = time.time()
+                Wk = recent_window_features(ch)
+                if Wk.shape[1]:
+                    recent.append(Wk.reindex(both_main[ch.key].to_numpy()).set_index(both_main.index))
+                    print(f"table {ch.name}: recent windows, {Wk.shape[1]} columns in {time.time() - t:.0f}s", flush=True)
+                del Wk
             Rk = None
             if one_at_a_time:
                 ch.df = None
@@ -681,6 +689,17 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
             L = lookup_features(both_main, lk.df, lk.key, lk.name)
             print(f"table {lk.name}: {L.shape[1]} lookup columns", flush=True)
             A.append(L)
+        if recent:
+            pos = np.arange(len(tr))
+            if len(pos) > CM_CHECK_PARENTS:
+                pos = np.sort(np.random.default_rng(0).choice(pos, CM_CHECK_PARENTS, replace=False))
+            n_cols = len(tr.columns) + sum(F.shape[1] for F in A + recent)
+            if stage_fits("recent windows check", 4 * 4.0 * len(pos) * n_cols) and child_models_help(
+                    tr.drop(columns=[c for c in (cfg.id, cfg.target) if c and c in tr.columns]).iloc[pos],
+                    [Fa.iloc[pos].reset_index(drop=True) for Fa in A], [R.iloc[pos].reset_index(drop=True) for R in recent],
+                    y.iloc[pos].reset_index(drop=True), cfg.task, what="recent windows", min_gain=0.005):
+                A.extend(recent)
+            recent = []
         if bags:
             # (the check's frames of both arms on the sampled rows, float32 mostly, and one fit's copies)
             pos = np.arange(len(tr))
@@ -690,7 +709,9 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
             if stage_fits("code bags check", 4 * 4.0 * len(pos) * n_cols) and child_models_help(
                     tr.drop(columns=[c for c in (cfg.id, cfg.target) if c and c in tr.columns]).iloc[pos],
                     [Fa.iloc[pos].reset_index(drop=True) for Fa in A], [B.iloc[pos].reset_index(drop=True) for B in bags],
-                    y.iloc[pos].reset_index(drop=True), cfg.task, what="code bags"):
+                    y.iloc[pos].reset_index(drop=True), cfg.task, what="code bags", min_gain=0.005):
+                # (32 bag columns a table must earn 0.5%: Home Credit's day counts read as codes passed at +0.19%
+                # and cost 0.0008 AUC; TalkingData mobile's apps earned +2.7%)
                 A.extend(bags)
             bags = []
         # The child-row models read their tables again, one at a time (the as-of tables are dropped here too). What
@@ -744,6 +765,32 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
                 A.append(M.reindex(both_main[ch.key].to_numpy()).set_index(both_main.index))
                 label_cols += list(M.columns)
                 print(f"child model {ch.name}: {time.time() - t:.0f}s", flush=True)
+        # What each parent's codes say about the target (out of fold), kept when the quick check finds it adds 0.5%.
+        if cm_tables:
+            task_ = cfg.task or ("binary" if y.nunique() == 2 else "regression")
+            k_ = y.nunique() if task_ == "multiclass" else 1
+            cte = []
+            for ch in cm_tables:
+                if not stage_fits(f"table {ch.name}: code target maps", 16.0 * sizes[ch.name][0] * (k_ + 3)):
+                    continue
+                t = time.time()
+                yk = pd.Series(y.to_numpy(), index=tr[ch.key].to_numpy())
+                C = code_target_features(table(ch), yk, te[ch.key].to_numpy(), task_)
+                if C.shape[1]:
+                    cte.append(C.reindex(both_main[ch.key].to_numpy()).set_index(both_main.index))
+                    print(f"table {ch.name}: code target maps, {C.shape[1]} columns in {time.time() - t:.0f}s", flush=True)
+                del C
+            if cte:
+                pos = np.arange(len(tr))
+                if len(pos) > CM_CHECK_PARENTS:
+                    pos = np.sort(np.random.default_rng(0).choice(pos, CM_CHECK_PARENTS, replace=False))
+                if child_models_help(tr.drop(columns=[c for c in (cfg.id, cfg.target) if c and c in tr.columns]).iloc[pos],
+                                     [Fa.iloc[pos].reset_index(drop=True) for Fa in A],
+                                     [C.iloc[pos].reset_index(drop=True) for C in cte],
+                                     y.iloc[pos].reset_index(drop=True), cfg.task, what="code target maps", min_gain=0.005):
+                    A.extend(cte)
+                    label_cols += [c for C in cte for c in C.columns]
+            cte = []
         # One concat, not one per block (each pairwise concat copied every column so far), then each side as views
         # of its rows: a concat per side of row slices copied every block twice more, consolidated and joined
         # (Home Credit's 1,200 related columns: the pipeline's peak before the search).
@@ -792,7 +839,12 @@ def run(cfg: PipelineConfig) -> Tuple[Path, Path]:
                   f"in {time.time() - t:.0f}s", flush=True)
     if cfg.panel == "auto":
         t = time.time()
-        Ptr, Pte, P = panel_features(Xtr, Xte)
+        Ptr, Pte, P = panel_features(Xtr, Xte, y=y if cfg.task != "multiclass" else None)
+        if P is not None and Ptr.shape[1]:
+            keep, note = panel_helps(Xtr, Ptr, y, P["day"], cfg.task)
+            print(f"panel check: {note} -> {'kept' if keep else 'dropped'} ({time.time() - t:.0f}s)", flush=True)
+            if not keep:
+                P = None
         if P is not None:
             Xtr = pd.concat([Xtr.reset_index(drop=True), Ptr], axis=1)
             Xte = pd.concat([Xte.reset_index(drop=True), Pte], axis=1)

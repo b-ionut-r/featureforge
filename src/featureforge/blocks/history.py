@@ -122,3 +122,45 @@ def event_log_features(main: pd.DataFrame, ch: Child, outcome: str, time: str, i
             out[f"{pre}_item_mean"] = np.where(n2 > 0, (S2[p2] - S2[lo2]) / n2, np.nan)
             out[f"{pre}_item_since"] = np.where(p2 > lo2, mt - t2[np.clip(p2 - 1, 0, len(t2) - 1)], np.nan)
     return pd.DataFrame({k: np.asarray(v, dtype=np.float32) for k, v in out.items()}, index=main.index)
+
+
+def recent_window_features(ch: Child, shares=(0.1, 0.3), max_cols: int = 20) -> pd.DataFrame:
+    """Per key: its rows of the recent past only, against its whole history. A row's age is how long before the
+    key's own latest row it happened; the windows hold the youngest 10% and 30% of all rows' ages (contest
+    winners on Home Credit and Elo summarised the last months of each customer's history apart from the rest).
+    Per window: the row count and the mean and sum of each numeric column; per key: the span of its history and
+    the time since its latest row, against the latest row of the whole table. Label-free."""
+    df = ch.df
+    ids = {ch.key, ch.time, *ch.drop}
+    num = [c for c in df.columns if c not in ids and pd.api.types.is_numeric_dtype(df[c])
+           and not pd.api.types.is_bool_dtype(df[c])][:max_cols]
+    t = time_values(df[ch.time])
+    ok = ~np.isnan(t)
+    key = df[ch.key].to_numpy()[ok]
+    t = t[ok]
+    kk, inv = np.unique(key, return_inverse=True)
+    last = np.full(len(kk), -np.inf)
+    np.maximum.at(last, inv, t)
+    first = np.full(len(kk), np.inf)
+    np.minimum.at(first, inv, t)
+    age = last[inv] - t
+    pos = age[age > 0]
+    out = {f"span": last - first, "since_latest": np.nanmax(t) - last}
+    if len(pos):
+        vals = {c: df[c].to_numpy(dtype=float)[ok] for c in num}
+        for q in shares:
+            lim = np.quantile(pos, q)
+            w = age <= lim
+            n = np.bincount(inv[w], minlength=len(kk)).astype(float)
+            out[f"win{int(q * 100)}_count"] = n
+            for c, v in vals.items():
+                m = w & ~np.isnan(v)
+                s_ = np.bincount(inv[m], weights=v[m], minlength=len(kk))
+                c_ = np.bincount(inv[m], minlength=len(kk))
+                out[f"{c}_win{int(q * 100)}_sum"] = s_
+                with np.errstate(all="ignore"):
+                    out[f"{c}_win{int(q * 100)}_mean"] = np.where(c_ > 0, s_ / c_, np.nan)
+    res = pd.DataFrame(out, index=pd.Index(kk, name=ch.key))
+    res.columns = [_safe(f"{ch.name}:{c}") for c in res.columns]
+    keep = [c for c in res.columns if res[c].notna().mean() > 0.01 and res[c].nunique() > 1]
+    return res[keep].astype(np.float32)

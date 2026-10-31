@@ -37,3 +37,50 @@
 {"loss": 0.17119896251275663, "auc": 0.964435759251419, "case": "homesite", "label": "raw", "n_cols": 297, "build_seconds": 0}
 {"loss": 0.16882968910815624, "auc": 0.9652750983171978, "case": "homesite", "label": "v22", "n_cols": 357, "build_seconds": 1475.4455971717834}
 {"loss": 9.151157275420484, "case": "optiver", "label": "raw", "n_cols": 15, "build_seconds": 0}
+{"loss": 0.25370673126086896, "auc": 0.8294641927159129, "case": "instacart", "label": "hand", "n_cols": 33, "build_seconds": 11.681129455566406}
+{"loss": 2.3974376592986646, "acc": 0.15145019760198272, "case": "tdmob", "label": "raw", "n_cols": 2, "build_seconds": 0}
+{"loss": 2.314864829556712, "acc": 0.18373635206644787, "case": "tdmob", "label": "v27", "n_cols": 72, "build_seconds": 1684.452329158783}
+{"loss": 2.314864829556712, "acc": 0.18373635206644787, "case": "tdmob", "label": "v27b", "n_cols": 72, "build_seconds": 1592.7741894721985}
+{"loss": 2.2939724711622103, "acc": 0.19190836626699712, "case": "tdmob", "label": "hand", "n_cols": 103, "build_seconds": 11.497015476226807}
+{"loss": 0.7752625975376155, "wr2": -0.11108293180003148, "case": "jane", "label": "raw", "n_cols": 92, "build_seconds": 0}
+{"loss": 0.765781130319796, "wr2": -0.08478279845070258, "case": "jane", "label": "v27", "n_cols": 164, "build_seconds": 474.373046875}
+{"loss": 0.7752613217004745, "wr2": -0.11107910591821346, "case": "jane", "label": "v28", "n_cols": 92, "build_seconds": 419.1414797306061}
+{"loss": 8.662064231377602, "case": "optiver", "label": "v28", "n_cols": 201, "build_seconds": 1748.9755263328552}
+{"loss": 0.7349431097589346, "wr2": 0.004099648030388203, "case": "jane", "label": "raw", "n_cols": 92, "build_seconds": 0}
+{"loss": 0.7348883157695086, "wr2": 0.004079402655527753, "case": "jane", "label": "v27", "n_cols": 164, "build_seconds": 474.373046875}
+{"loss": 2.2952103468364675, "acc": 0.19070265925380134, "case": "tdmob", "label": "hand_noh", "n_cols": 77, "build_seconds": 0}
+{"loss": 2.380908833167921, "acc": 0.1600241141402639, "case": "tdmob", "label": "hand_nosvd", "n_cols": 33, "build_seconds": 0}
+{"loss": 2.2959016936024357, "acc": 0.18855918011923103, "case": "tdmob", "label": "v27k32", "n_cols": 104, "build_seconds": 0}
+{"loss": 2.2932397378479528, "acc": 0.19083662669971196, "case": "tdmob", "label": "v27k48", "n_cols": 136, "build_seconds": 0}
+{"loss": 2.294771193840065, "acc": 0.18788934288967782, "case": "tdmob", "label": "v29", "n_cols": 104, "build_seconds": 2278.9817943573}
+{"loss": 0.7033850657560025, "acc": 0.7543767964463026, "case": "walmart", "label": "v29", "n_cols": 154, "build_seconds": 3097.631546974182}
+{"loss": 0.23218071862951248, "auc": 0.8011537944856273, "case": "hc", "label": "v29", "n_cols": 1610, "build_seconds": 4012.667725801468}
+{"loss": 3.8373099873901406, "case": "elo", "label": "raw", "n_cols": 4, "build_seconds": 0}
+{"loss": 3.740306516397703, "case": "elo", "label": "v27", "n_cols": 54, "build_seconds": 437.93102383613586}
+{"loss": 3.740306516397703, "case": "elo", "label": "v29", "n_cols": 54, "build_seconds": 432.30192017555237}
+{"loss": 0.7349431097589346, "wr2": 0.004099648030388203, "case": "jane", "label": "v30", "n_cols": 92, "build_seconds": 403.15023398399353}
+{"loss": 8.661329120751736, "case": "optiver", "label": "v30", "n_cols": 201, "build_seconds": 1657.2565488815308}
+{"loss": 3.740306516397703, "case": "elo", "label": "q29", "n_cols": 54, "build_seconds": 379.70334362983704}
+{"loss": 3.731170551192938, "case": "elo", "label": "q31", "n_cols": 86, "build_seconds": 463.14145708084106}
+{"loss": 2.293997102629246, "acc": 0.19003282202424812, "case": "tdmob", "label": "q29", "n_cols": 129, "build_seconds": 1059.5638961791992}
+{"loss": 2.293997102629246, "acc": 0.19003282202424812, "case": "tdmob", "label": "q31", "n_cols": 129, "build_seconds": 1131.5726585388184}
+{"loss": 1.3964066838519849, "acc": 0.4872611464968153, "case": "plasticc", "label": "raw", "n_cols": 8, "build_seconds": 0}
+{"loss": 0.5743211924732461, "acc": 0.8089171974522293, "case": "plasticc", "label": "v27", "n_cols": 892, "build_seconds": 1389.685711145401}
+{"loss": 0.5743211924732461, "acc": 0.8089171974522293, "case": "plasticc", "label": "v31", "n_cols": 892, "build_seconds": 1595.5435218811035}
+{"loss": 3.731170551192938, "case": "elo", "label": "q32", "n_cols": 86, "build_seconds": 504.355943441391}
+{"loss": 2.2710350001475774, "acc": 0.19472168263112064, "case": "tdmob", "label": "q32", "n_cols": 128, "build_seconds": 1238.5736103057861}
+{"loss": 0.6261608642079266, "acc": 0.79171974522293, "case": "plasticc", "label": "q32", "n_cols": 132, "build_seconds": 997.0172369480133}
+{"loss": 3.731170551192938, "case": "elo", "label": "v32", "n_cols": 86, "build_seconds": 740.6260318756104}
+{"loss": 390.6686280962466, "case": "enefit", "label": "v32", "n_cols": 62, "build_seconds": 93.81229257583618}
+{"loss": 0.7349431097589346, "wr2": 0.004099648030388203, "case": "jane", "label": "v32", "n_cols": 92, "build_seconds": 483.8867721557617}
+{"loss": 2.2710350001475774, "acc": 0.19472168263112064, "case": "tdmob", "label": "v32", "n_cols": 128, "build_seconds": 2825.1004672050476}
+{"loss": 0.5743211924732461, "acc": 0.8089171974522293, "case": "plasticc", "label": "v32", "n_cols": 892, "build_seconds": 2453.64230966568}
+{"loss": 0.16882968910815624, "auc": 0.9652750983171978, "case": "homesite", "label": "v32", "n_cols": 357, "build_seconds": 1393.6173264980316}
+{"loss": 0.11307597408691508, "auc": 0.7714671281903821, "ndcg38": 0.4822690281125078, "case": "expedia", "label": "raw", "n_cols": 50, "build_seconds": 0}
+{"loss": 0.10633819276979506, "auc": 0.8225108896581587, "ndcg38": 0.4949925080775463, "case": "expedia", "label": "v32", "n_cols": 78, "build_seconds": 726.125007390976}
+{"loss": 0.1055027842989093, "auc": 0.8272282011473558, "ndcg38": 0.5030258179250103, "case": "expedia", "label": "v33", "n_cols": 84, "build_seconds": 955.4810812473297}
+{"loss": 0.6104684144898167, "acc": 0.7836425398484452, "case": "walmart", "label": "v32", "n_cols": 268, "build_seconds": 6629.024275779724}
+{"loss": 0.23204193084044497, "auc": 0.8020188936549979, "case": "hc", "label": "v32", "n_cols": 1355, "build_seconds": 4721.741991996765}
+{"loss": 8.667214711645503, "case": "optiver", "label": "v32", "n_cols": 201, "build_seconds": 2009.6733002662659}
+{"loss": 0.2538695426571895, "auc": 0.8291690353976986, "case": "instacart", "label": "v32", "n_cols": 347, "build_seconds": 2023.5509057044983}
+{"loss": 0.2538695426571895, "auc": 0.8291690353976986, "case": "instacart", "label": "v33", "n_cols": 347, "build_seconds": 1816.900250673294}
